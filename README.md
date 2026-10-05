@@ -1,4 +1,4 @@
-# VDI 백엔드
+# devoops-backend
 
 [prd.md](prd.md) 및 [Notion API 명세](https://app.notion.com/p/dc4b52ad1e3e83609bd881ce641fedd9)를 구현한 Go 백엔드입니다. 최초 구현 시 확인한 18개 상세 계약은 [docs/reference/notion-contracts.json](docs/reference/notion-contracts.json)에 보관했습니다. 기존 Python/Kubernetes Pod 목업을 런타임에 사용하지 않습니다.
 
