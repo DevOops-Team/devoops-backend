@@ -1,0 +1,6 @@
+.git
+.cache
+.env
+docs
+prd.md
+deploy

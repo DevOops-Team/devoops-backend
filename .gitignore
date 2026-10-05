@@ -1,0 +1,5 @@
+.cache/
+.env
+*.log
+/bin/
+/deploy/secret.yaml
