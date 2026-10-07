@@ -21,3 +21,5 @@ jobs:
           fetch-depth: "0"   # gitleaks는 전체 이력 필요
       - name: secret-detect
         uses: "collabops/secret-detect@v1"
+        with:
+          config: .gitleaks.toml   # 자리표시 값 예외 포함

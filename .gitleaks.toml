@@ -1,0 +1,8 @@
+# gitleaks 설정 — 기본 규칙 + 자리표시 값 예외
+# CollabOps secret-detect 템플릿은 .gitleaksignore를 읽지 않으므로 ci.yml에서 config로 이 파일을 지정한다.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "example 파일의 자리표시 값 (replace-with-...)"
+regexes = ['''^replace-with-[a-z0-9-]+$''']
