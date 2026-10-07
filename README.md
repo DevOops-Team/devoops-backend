@@ -2,7 +2,7 @@
 
 [prd.md](prd.md) 및 [Notion API 명세](https://app.notion.com/p/dc4b52ad1e3e83609bd881ce641fedd9)를 구현한 Go 백엔드입니다. 최초 구현 시 확인한 18개 상세 계약은 [docs/reference/notion-contracts.json](docs/reference/notion-contracts.json)에 보관했습니다. 기존 Python/Kubernetes Pod 목업을 런타임에 사용하지 않습니다.
 
-Go 표준 HTTP 서버, MongoDB 공식 드라이버, Gophercloud OpenStack SDK를 사용합니다. API와 영속 작업자가 한 프로세스에서 실행됩니다. 공개 API는 `/api` 아래 18개이며, 공개 DTO에 MongoDB 내부 필드·VM ID·IP·비밀번호를 노출하지 않습니다.
+Go 표준 HTTP 서버, MongoDB 공식 드라이버, Gophercloud OpenStack SDK를 사용합니다. API와 영속 작업자가 한 프로세스에서 실행됩니다. 공개 API는 기존 18개와 프론트 연동용 사양 조회 1개로 구성되며, 공개 DTO에 MongoDB 내부 필드·VM ID·IP·비밀번호를 노출하지 않습니다.
 
 ## 실행
 
@@ -19,6 +19,8 @@ curl -i http://localhost:8080/api/auth/login \
 ```
 
 초기 관리자 기본 계약은 `admin` / `admin@example.com` / `secret`이며 예제 Secret에서 주입합니다. 최초 부트스트랩 표시를 DB에 기록하므로 재시작 시 기존 관리자 이름·역할·비밀번호를 덮어쓰거나 삭제된 계정을 재생성하지 않습니다. 일반 사용자는 관리자 API로 추가합니다.
+
+프론트엔드 연결·실행 및 통합 검증 방법은 [docs/frontend-integration.md](docs/frontend-integration.md)를 참고하세요.
 
 ## 설정
 
@@ -44,7 +46,7 @@ curl -i http://localhost:8080/api/auth/login \
 
 등록 가능한 OS 타입은 `UBUNTU`, `WINDOWS`, `ROCKY`, `DEBIAN`입니다. 등록 배열이 비어 있으면 이미지 목록도 비어 있습니다. DB에 OS 등록을 저장하고, 목록 및 생성 시 실제 Glance 이미지와 `m1.micro`를 검사합니다. OS 내부 `imageId`는 API JSON에서 제외합니다.
 
-Flavor RAM(MiB)은 1024의 배수여야 합니다. 루트 디스크가 0이면 Glance `virtual_size`(byte)가 양의 정수 GiB로 정확히 표현되어야 합니다. `min_disk`를 실제 크기로 대신 사용하지 않습니다. RAM/디스크를 반올림하지 않고 호환되지 않는 조합은 가용 목록에서 제외합니다. 생성 입력 사양이 실제 허용 사양과 다르면 400 검증 오류, 표현 불가능한 Flavor는 409 `SPEC_UNAVAILABLE`, 비가용 이미지는 409 `OS_UNAVAILABLE`입니다. 현재 계약에는 사양 안내 API가 없어 운영자가 실제 허용 CPU/RAM/디스크를 프론트에 전달해야 합니다.
+Flavor RAM(MiB)은 1024의 배수여야 합니다. 루트 디스크가 0이면 Glance `virtual_size`(byte)가 양의 정수 GiB로 정확히 표현되어야 합니다. `min_disk`를 실제 크기로 대신 사용하지 않습니다. RAM/디스크를 반올림하지 않고 호환되지 않는 조합은 가용 목록에서 제외합니다. 생성 입력 사양이 실제 허용 사양과 다르면 400 검증 오류, 표현 불가능한 Flavor는 409 `SPEC_UNAVAILABLE`, 비가용 이미지는 409 `OS_UNAVAILABLE`입니다. 프론트 연동용 `GET /api/images/{osId}/spec`은 선택 OS의 실제 허용 사양을 반환합니다. 프론트 생성 폼이 이 값을 조회하며, 생성 시 서버에서 다시 검증합니다.
 
 ## API
 
@@ -56,6 +58,7 @@ Flavor RAM(MiB)은 1024의 배수여야 합니다. 루트 디스크가 0이면 G
 | POST | `/api/auth/logout` | 204, 본문 없음 |
 | GET | `/api/me` | 200 |
 | GET | `/api/images` | 200 |
+| GET | `/api/images/{osId}/spec` | 200 |
 | GET / POST | `/api/desktops` | 200 / 202 |
 | GET / DELETE | `/api/desktops/{desktopId}` | 200 / 202 |
 | POST | `/api/desktops/{desktopId}/connect` | 200 |
@@ -69,6 +72,8 @@ Flavor RAM(MiB)은 1024의 배수여야 합니다. 루트 디스크가 0이면 G
 로그인은 `email,password`, 사용자 추가는 `name,email,password,role`을 받습니다. 사용자 PATCH는 `name,email,role` 중 전달된 필드만 변경하며 null 및 빈 객체를 거부합니다. 생성 입력은 `name,osId,cpuCores,memoryGb,storageGb` 모두 필수이고 관리자 할당은 `userId`가 추가됩니다. 두 생성 API에는 UUID `Idempotency-Key`가 필수입니다.
 
 관리자 데스크톱 목록만 `userId` 필터를 받습니다. 감사 이벤트는 `limit`(기본 100, 1~500), `actorId`, `desktopId`, `action`, `targetType`을 지원하며 생성 시각 내림차순입니다. 상세 enum과 DTO는 저장된 Notion 계약을 참고하세요.
+
+`GET /api/images/{osId}/spec`은 `{osId,cpuCores,memoryGb,storageGb}`를 반환하며 이미지·Flavor 내부 ID는 노출하지 않습니다. 다른 API와 동일하게 Bearer 인증이 필요합니다.
 
 ## 저장·복구 동작
 
