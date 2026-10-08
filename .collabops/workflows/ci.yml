@@ -1,0 +1,25 @@
+# 기본 검사 파이프라인 — 비밀 값 커밋 탐지(gitleaks)
+# 실습망(172.30.0.0/24)에 접근하는 작업은 여기에 넣지 않는다. 배포·복구는 GitHub Actions가 맡는다.
+# 정적 보안 분석(collabops/sast-scan@v1)은 2026-10-06 기준 템플릿의 Semgrep이 레지스트리 규칙을 읽지 못해 제외.
+name: ci
+triggers:
+  push:
+    branches: ["**"]
+  change_request:
+    branches: [main]
+  workflow_dispatch: {}
+env:
+  REPO_URL: "https://collabops.ai/devoops/devoops-backend.git"
+jobs:
+  secret:
+    phase: security
+    steps:
+      - name: checkout
+        uses: "collabops/checkout@v2"
+        with:
+          repo-url: ${{ env.REPO_URL }}
+          fetch-depth: "0"   # gitleaks는 전체 이력 필요
+      - name: secret-detect
+        uses: "collabops/secret-detect@v1"
+        with:
+          config: .gitleaks.toml   # 자리표시 값 예외 포함
