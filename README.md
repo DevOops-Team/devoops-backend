@@ -88,6 +88,10 @@ Flavor RAM(MiB)은 1024의 배수여야 합니다. 루트 디스크가 0이면 G
 
 ## 빌드 확인
 
+GitHub의 `.github/workflows/publish-image.yml`은 CollabOps에서 미러된 모든 브랜치 push, `v*` 태그 push, 수동 실행에서 Docker 이미지를 빌드해 GHCR에 업로드합니다. PR에서는 빌드만 검증합니다. 브랜치 이름을 정규화한 태그와 `sha-<전체 커밋 SHA>`를 발행하고, 기본 브랜치 `main`에서만 `latest`를 갱신합니다. 버전 태그 `v1.2.3`은 이미지 태그 `1.2.3`으로 발행합니다.
+
+GitHub Actions repository variables는 `GHCR_IMAGE=ghcr.io/devoops-team/devoops-backend`, `IMAGE_PLATFORMS=linux/amd64`입니다. 인증에는 자동 제공되는 `GITHUB_TOKEN`과 작업의 `packages: write` 권한을 사용하므로 별도 GHCR secret은 필요 없습니다. 기존 CollabOps → GitHub 미러의 `GH_DEPLOY_KEY`는 CollabOps에 설정합니다.
+
 ```bash
 make vet
 make build
