@@ -1,6 +1,9 @@
 .git
 .cache
 .env
+.env.*
+**/*_test.go
+.github
 docs
 prd.md
 deploy

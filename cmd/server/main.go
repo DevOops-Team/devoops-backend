@@ -50,34 +50,9 @@ func run() error {
 	if e != nil {
 		return e
 	}
-	var images []vdi.OS
-	// imageId is intentionally excluded from API JSON. Parse configuration separately.
-	var registrations []struct {
-		Name    string `json:"name"`
-		Type    string `json:"type"`
-		Version string `json:"version"`
-		ImageID string `json:"imageId"`
-	}
-	if e = json.Unmarshal([]byte(env("OS_IMAGES_JSON", "[]")), &registrations); e != nil {
-		return errors.New("invalid OS_IMAGES_JSON")
-	}
-	seen := map[string]bool{}
-	for _, r := range registrations {
-		if seen[r.Type] || r.Name == "" || r.Version == "" || r.ImageID == "" || (r.Type != "UBUNTU" && r.Type != "WINDOWS" && r.Type != "ROCKY" && r.Type != "DEBIAN") {
-			return errors.New("invalid image registration")
-		}
-		seen[r.Type] = true
-		images = append(images, vdi.OS{Name: r.Name, Type: r.Type, Version: r.Version, ImageID: r.ImageID})
-	}
 	credentials := map[string]guacamole.Credential{}
 	if e = json.Unmarshal([]byte(os.Getenv("RDP_CREDENTIALS_JSON")), &credentials); e != nil {
 		return errors.New("invalid RDP_CREDENTIALS_JSON")
-	}
-	for _, im := range images {
-		c := credentials[im.Type]
-		if c.Username == "" || c.Password == "" {
-			return errors.New("missing image RDP credentials")
-		}
 	}
 	guac, e := guacamole.New(os.Getenv("GUAC_URL"), os.Getenv("GUAC_JSON_KEY"), credentials, ttl)
 	if e != nil {
@@ -108,8 +83,15 @@ func run() error {
 	if name == "" || email == "" || password == "" {
 		return errors.New("bootstrap administrator Secret required")
 	}
-	if e = store.Bootstrap(startup, name, strings.ToLower(email), password, images); e != nil {
+	if e = store.Bootstrap(startup, name, strings.ToLower(email), password); e != nil {
 		return errors.New("MongoDB bootstrap failed (replica set required)")
+	}
+	initialized, e := store.InitializeImages(startup, provider.ListImages)
+	if e != nil {
+		return errors.New("OpenStack image bootstrap failed")
+	}
+	if initialized {
+		slog.Info("OS catalog initialized from Glance")
 	}
 	app := vdi.NewApp(store, provider, guac)
 	worker := vdi.Worker{Store: store, Cloud: provider, Now: time.Now, Interval: interval, ReadyTimeout: readyTimeout, LeaseDuration: 4*timeout + 30*time.Second}

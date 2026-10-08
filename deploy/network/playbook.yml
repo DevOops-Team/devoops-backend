@@ -1,0 +1,54 @@
+---
+- name: Prepare the VDI tenant network after Kolla deployment
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  module_defaults:
+    group/openstack.cloud.openstack:
+      region_name: "{{ vdi_region_name }}"
+      interface: public
+  tasks:
+    - name: Create the private network using the configured tenant network driver
+      when: not ansible_check_mode
+      openstack.cloud.network:
+        state: present
+        name: "{{ vdi_network_name }}"
+        admin_state_up: true
+        external: false
+        shared: false
+
+    - name: Create the DHCP subnet
+      when: not ansible_check_mode
+      openstack.cloud.subnet:
+        state: present
+        name: "{{ vdi_subnet_name }}"
+        network: "{{ vdi_network_name }}"
+        ip_version: 4
+        cidr: "{{ vdi_subnet_cidr }}"
+        gateway_ip: "{{ vdi_gateway_ip }}"
+        is_dhcp_enabled: true
+        allocation_pools: "{{ vdi_allocation_pools }}"
+        dns_nameservers: "{{ vdi_dns_nameservers }}"
+
+    - name: Connect the private subnet to the existing external network
+      when: not ansible_check_mode
+      openstack.cloud.router:
+        state: present
+        name: "{{ vdi_router_name }}"
+        is_admin_state_up: true
+        network: "{{ vdi_external_network }}"
+        enable_snat: true
+        interfaces:
+          - "{{ vdi_subnet_name }}"
+
+    - name: Read the resulting network UUID
+      openstack.cloud.networks_info:
+        name: "{{ vdi_network_name }}"
+      register: vdi_network_info
+      check_mode: false
+
+    - name: Print the backend setting for this deployment
+      ansible.builtin.debug:
+        msg: "OS_NETWORK_ID={{ vdi_network_info.networks[0].id }}"

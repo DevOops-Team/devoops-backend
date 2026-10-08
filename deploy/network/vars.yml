@@ -1,0 +1,13 @@
+vdi_network_name: vdi-private
+vdi_subnet_name: vdi-private-subnet
+vdi_subnet_cidr: 10.20.0.0/24
+vdi_gateway_ip: 10.20.0.1
+vdi_allocation_pools:
+  - start: 10.20.0.100
+    end: 10.20.0.200
+vdi_dns_nameservers:
+  - 1.1.1.1
+  - 8.8.8.8
+vdi_router_name: vdi-router
+vdi_external_network: ext-net
+vdi_region_name: RegionOne

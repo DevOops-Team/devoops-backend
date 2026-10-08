@@ -134,6 +134,15 @@ func (a *App) wrap(admin bool, f endpoint) http.HandlerFunc {
 }
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := a.Store.DB.Client().Ping(ctx, nil); err != nil {
+			respond(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+			return
+		}
+		respond(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
 	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		if e := a.login(w, r); e != nil {
 			failure(w, e)

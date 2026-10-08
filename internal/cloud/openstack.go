@@ -10,9 +10,12 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -50,6 +53,51 @@ func New(ctx context.Context, cfg Config) (*OpenStack, error) {
 		return nil, fmt.Errorf("Glance endpoint unavailable")
 	}
 	return &OpenStack{compute, image, cfg}, nil
+}
+
+func (o *OpenStack) ListImages(ctx context.Context) ([]vdi.OS, error) {
+	ctx, cancel := context.WithTimeout(ctx, o.Config.Timeout)
+	defer cancel()
+	p, e := images.List(o.Image, images.ListOpts{Status: "active"}).AllPages(ctx)
+	if e != nil {
+		return nil, fmt.Errorf("Glance image listing failed")
+	}
+	list, e := images.ExtractImages(p)
+	if e != nil {
+		return nil, fmt.Errorf("invalid Glance image listing")
+	}
+	catalog := imageCatalog(list)
+	slog.Info("Glance images fetched for initial OS catalog", "images", len(list), "registered", len(catalog))
+	return catalog, nil
+}
+
+func imageCatalog(list []images.Image) []vdi.OS {
+	// The existing catalog permits one image per OS type. Prefer the newest
+	// eligible image, with a stable ID tie-break independent of API page order.
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].CreatedAt.Equal(list[j].CreatedAt) {
+			return list[i].ID < list[j].ID
+		}
+		return list[i].CreatedAt.After(list[j].CreatedAt)
+	})
+	catalog := []vdi.OS{}
+	seen := map[string]bool{}
+	for _, image := range list {
+		distro, _ := image.Properties["os_distro"].(string)
+		version, _ := image.Properties["os_version"].(string)
+		typ := strings.ToUpper(strings.TrimSpace(distro))
+		version = strings.TrimSpace(version)
+		name := strings.TrimSpace(image.Name)
+		if image.Status != "active" || image.ID == "" || name == "" || version == "" || seen[typ] {
+			continue
+		}
+		switch typ {
+		case "UBUNTU", "WINDOWS", "ROCKY", "DEBIAN":
+			catalog = append(catalog, vdi.OS{Name: name, Type: typ, Version: version, ImageID: image.ID})
+			seen[typ] = true
+		}
+	}
+	return catalog
 }
 func (o *OpenStack) Spec(ctx context.Context, imageID string) (vdi.Spec, error) {
 	ctx, cancel := context.WithTimeout(ctx, o.Config.Timeout)

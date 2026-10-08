@@ -14,8 +14,3 @@ data:
   READY_TIMEOUT: 15m
   GUAC_URL_TTL: 2m
   GUAC_URL: https://vdi.example.com/guacamole/
-  OS_IMAGES_JSON: >-
-    [{"name":"Ubuntu","type":"UBUNTU","version":"replace-version","imageId":"replace-image-uuid"},
-    {"name":"Windows","type":"WINDOWS","version":"replace-version","imageId":"replace-image-uuid-2"},
-    {"name":"Rocky","type":"ROCKY","version":"replace-version","imageId":"replace-image-uuid-3"},
-    {"name":"Debian","type":"DEBIAN","version":"replace-version","imageId":"replace-image-uuid-4"}]

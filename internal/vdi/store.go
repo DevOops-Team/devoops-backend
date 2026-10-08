@@ -83,7 +83,7 @@ func all[T any](ctx context.Context, c *mongo.Collection, f any, opts ...options
 	e = cur.All(ctx, &out)
 	return out, e
 }
-func (s *Store) Bootstrap(ctx context.Context, name, email, password string, images []OS) error {
+func (s *Store) Bootstrap(ctx context.Context, name, email, password string) error {
 	indexes := map[string][]mongo.IndexModel{
 		"users":       {{Keys: bson.D{{Key: "id", Value: 1}}, Options: options.Index().SetUnique(true)}, {Keys: bson.D{{Key: "email", Value: 1}}, Options: options.Index().SetUnique(true)}, {Keys: bson.D{{Key: "role", Value: 1}, {Key: "deleted", Value: 1}}}},
 		"os":          {{Keys: bson.D{{Key: "id", Value: 1}}, Options: options.Index().SetUnique(true)}, {Keys: bson.D{{Key: "type", Value: 1}}, Options: options.Index().SetUnique(true)}, {Keys: bson.D{{Key: "imageId", Value: 1}}, Options: options.Index().SetUnique(true)}},
@@ -132,30 +132,65 @@ func (s *Store) Bootstrap(ctx context.Context, name, email, password string, ima
 		} else {
 			s.SystemID = marker.SystemID
 		}
-		for _, image := range images {
-			var old OS
-			e := s.C("os").FindOne(c, bson.M{"type": image.Type}).Decode(&old)
-			if errors.Is(e, mongo.ErrNoDocuments) {
+		return nil
+	})
+	return e
+}
+
+// InitializeImages preserves existing catalogs and commits a successful initial
+// import once, including an empty result. Failed imports remain retryable.
+func (s *Store) InitializeImages(ctx context.Context, load func(context.Context) ([]OS, error)) (bool, error) {
+	marker := bson.M{"_id": "os-bootstrap"}
+	e := s.C("settings").FindOne(ctx, marker).Err()
+	if e == nil {
+		return false, nil
+	}
+	if !errors.Is(e, mongo.ErrNoDocuments) {
+		return false, e
+	}
+	n, e := s.C("os").CountDocuments(ctx, bson.M{})
+	if e != nil {
+		return false, e
+	}
+	var images []OS
+	if n == 0 {
+		images, e = load(ctx)
+		if e != nil {
+			return false, e
+		}
+	}
+	initialized := false
+	e = s.Tx(ctx, func(c context.Context) error {
+		initialized = false
+		// Serialize competing Pod imports, then recheck after the network request.
+		if _, e := s.C("counters").UpdateOne(c, bson.M{"_id": "osBootstrapGuard"}, bson.M{"$inc": bson.M{"value": 1}}, options.UpdateOne().SetUpsert(true)); e != nil {
+			return e
+		}
+		e := s.C("settings").FindOne(c, marker).Err()
+		if e == nil {
+			return nil
+		}
+		if !errors.Is(e, mongo.ErrNoDocuments) {
+			return e
+		}
+		n, e := s.C("os").CountDocuments(c, bson.M{})
+		if e != nil {
+			return e
+		}
+		if n == 0 {
+			for _, image := range images {
 				image.ID, e = s.NextID(c)
 				if e != nil {
 					return e
 				}
-			} else if e != nil {
-				return e
-			} else {
-				image.ID = old.ID
-			}
-			if _, e = s.C("os").ReplaceOne(c, bson.M{"type": image.Type}, image, options.Replace().SetUpsert(true)); e != nil {
-				return e
+				if _, e = s.C("os").InsertOne(c, image); e != nil {
+					return e
+				}
 			}
 		}
-		// Removed registrations are not returned, but retained as historical desktop snapshots.
-		keep := []string{}
-		for _, im := range images {
-			keep = append(keep, im.Type)
-		}
-		_, e = s.C("os").DeleteMany(c, bson.M{"type": bson.M{"$nin": keep}})
+		_, e = s.C("settings").InsertOne(c, bson.M{"_id": "os-bootstrap", "completedAt": time.Now().UTC()})
+		initialized = e == nil
 		return e
 	})
-	return e
+	return initialized && e == nil, e
 }
