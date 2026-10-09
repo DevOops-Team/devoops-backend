@@ -11,3 +11,7 @@ vdi_dns_nameservers:
 vdi_router_name: vdi-router
 vdi_external_network: ext-net
 vdi_region_name: RegionOne
+# 라우터 외부 IP 고정 — K8s 노드 경로(devoops-action-runner k8s/vdi-route)가 이 주소를 게이트웨이로 쓴다.
+# 자동 할당이면 라우터 재생성 시 바뀌어 포털이 "RDP 준비중"에서 멈춘다 (트러블슈팅 로그 #11)
+vdi_external_subnet: ext-subnet
+vdi_router_external_ip: 172.30.0.109

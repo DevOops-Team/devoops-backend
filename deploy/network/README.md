@@ -9,7 +9,7 @@
 - DHCP: 활성화, 10.20.0.100~10.20.0.200
 - DNS: 1.1.1.1, 8.8.8.8
 - 라우터: vdi-router, ext-net 외부 게이트웨이, SNAT 활성화
-- 현재 라우터 외부 IP: 172.30.0.109 (자동 할당이므로 재생성 시 달라질 수 있음)
+- 라우터 외부 IP: 172.30.0.109 (`vars.yml`의 `vdi_router_external_ip`로 고정, K8s 노드 경로의 게이트웨이)
 
 백엔드의 단일 실행 설정 `.env`에 반영하고 컨테이너를 재생성했다. 이제 기본 `docker compose up -d`도 이 원격 설정을 사용한다:
 
@@ -42,6 +42,10 @@ ANSIBLE_COLLECTIONS_PATH="$PWD/collections" ansible-playbook -i localhost, playb
 ## 접근 경로
 
 내부망을 생성하면 Compute의 physnet1 직접 연결 없이 VM을 생성할 수 있다. 라우터 SNAT는 외부로 나가는 통신을 제공하지만 Mac의 backend/guacd에서 10.20.0.0/24로 들어오는 경로를 자동으로 만들지는 않는다. backend와 guacd 모두 VM 고정 IP:3389에 도달해야 한다. 현재 백엔드는 Floating IP를 자동 생성하지 않고 고정 IP를 우선 사용한다. RDP 연결 완료에는 별도 라우팅/접근 구성이 필요하다.
+
+**10-09 해결 (트러블슈팅 로그 #11):** K8s 노드 3대에 `10.20.0.0/24 via 172.30.0.109` 경로를 넣었다 (`devoops-action-runner`의 `k8s/vdi-route` playbook, `/etc/netplan/90-vdi-route.yaml`). backend Pod · guacd Pod의 트래픽은 Calico SNAT로 노드 IP(172.30.0.0/24)가 되어 보안그룹 `vdi-rdp-check`(3389, 172.30.0.0/24)를 통과한다. 라우터 외부 IP가 바뀌면 이 경로가 깨지므로 playbook에서 고정한다.
+
+같은 날 함께 찾은 원인: Glance 이미지 `ubuntu-24.04-xfce-xrdp-amd64`에 `/etc/machine-id`가 없어 systemd-networkd가 DHCP를 시작하지 못했다(`Failed to configure DHCPv4 client: No such file or directory`, VM에 IPv4 없음). 빈 machine-id를 넣은 `ubuntu-24.04-xfce-xrdp-amd64-20261009`로 교체했다. 이미지를 만들 때 machine-id는 **삭제하지 말고 비운다** (`truncate -s0 /etc/machine-id`).
 
 ## 이번 검증 결과
 

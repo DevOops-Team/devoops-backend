@@ -39,6 +39,9 @@
         name: "{{ vdi_router_name }}"
         is_admin_state_up: true
         network: "{{ vdi_external_network }}"
+        external_fixed_ips:
+          - subnet: "{{ vdi_external_subnet }}"
+            ip_address: "{{ vdi_router_external_ip }}"
         enable_snat: true
         interfaces:
           - "{{ vdi_subnet_name }}"
