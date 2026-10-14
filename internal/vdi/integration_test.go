@@ -274,6 +274,9 @@ func TestDesktopLifecycleAndGuacamole(t *testing.T) {
 	if ready := f.list(fmt.Sprintf("/api/admin/events?action=DESKTOP_READY&desktopId=%d", n), f.admin); len(ready) != 1 {
 		t.Fatal("ready event", ready)
 	}
+	if status, metrics := f.raw("GET", "/metrics", "", nil, ""); status != 200 || !strings.Contains(string(metrics), "vdi_desktop_create_duration_seconds_count") || !strings.Contains(string(metrics), `vdi_http_requests_total{code="202",route="POST /api/desktops"}`) {
+		t.Fatalf("metrics %d", status)
+	}
 	con := f.request("POST", path(n)+"/connect", user, nil, "", 200)
 	keys(t, con, "url", "expiresAt")
 	u, _ := url.Parse(con["url"].(string))

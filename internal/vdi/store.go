@@ -9,6 +9,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.mongodb.org/mongo-driver/v2/mongo/readconcern"
 	"go.mongodb.org/mongo-driver/v2/mongo/writeconcern"
+	"go.opentelemetry.io/otel"
 	"golang.org/x/crypto/bcrypt"
 	"time"
 )
@@ -36,6 +37,8 @@ func (s *Store) Tx(ctx context.Context, fn func(context.Context) error) error {
 		return e
 	}
 	defer sess.EndSession(ctx)
+	ctx, span := otel.Tracer("store").Start(ctx, "mongo.tx")
+	defer span.End()
 	_, e = sess.WithTransaction(ctx, func(c context.Context) (any, error) { return nil, fn(c) }, options.Transaction().SetReadConcern(readconcern.Snapshot()).SetWriteConcern(writeconcern.Majority()))
 	return e
 }

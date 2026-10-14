@@ -2,11 +2,14 @@ package vdi
 
 import (
 	"context"
+	"devoops/vdi/internal/telemetry"
 	"errors"
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 	"time"
 )
 
@@ -54,6 +57,12 @@ func (w *Worker) Tick(ctx context.Context) error {
 	}
 	if e != nil {
 		return e
+	}
+	// Continue the create request trace; steady-state watch ticks stay untraced.
+	if d.Phase != "watch" {
+		var span trace.Span
+		ctx, span = otel.Tracer("worker").Start(telemetry.Extract(ctx, d.TraceParent), "desktop.reconcile")
+		defer span.End()
 	}
 	event := ""
 	original := d.Revision
@@ -302,8 +311,11 @@ func (w *Worker) finishWithEvent(ctx context.Context, d Desktop, revision int64,
 }
 func (w *Worker) save(ctx context.Context, d Desktop, revision int64, event string, releaseQuota bool) error {
 	wasReserved := d.Reserved
-	return w.Store.Tx(ctx, func(c context.Context) error {
-		now := w.Now().UTC().Truncate(time.Millisecond)
+	var now time.Time
+	recorded := false
+	e := w.Store.Tx(ctx, func(c context.Context) error {
+		recorded = false
+		now = w.Now().UTC().Truncate(time.Millisecond)
 		d.UpdatedAt = now
 		d.NextRun = now.Add(w.Interval)
 		d.LeaseUntil = time.Time{}
@@ -330,8 +342,15 @@ func (w *Worker) save(ctx context.Context, d Desktop, revision int64, event stri
 			if event == "DESKTOP_DELETE" && d.DeleteActor > 0 {
 				actor = d.DeleteActor
 			}
-			return w.Store.Event(c, actor, &d.ID, event, "DESKTOP", event, now)
+			if e = w.Store.Event(c, actor, &d.ID, event, "DESKTOP", event, now); e != nil {
+				return e
+			}
+			recorded = true
 		}
 		return nil
 	})
+	if e == nil && recorded {
+		observeDesktopEvent(event, d, now)
+	}
+	return e
 }

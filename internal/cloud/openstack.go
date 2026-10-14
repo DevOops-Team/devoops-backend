@@ -2,6 +2,7 @@ package cloud
 
 import (
 	"context"
+	"devoops/vdi/internal/telemetry"
 	"devoops/vdi/internal/vdi"
 	"fmt"
 	"github.com/gophercloud/gophercloud/v2"
@@ -37,7 +38,7 @@ func New(ctx context.Context, cfg Config) (*OpenStack, error) {
 	if e != nil {
 		return nil, fmt.Errorf("invalid OpenStack identity endpoint")
 	}
-	provider.HTTPClient = http.Client{Timeout: cfg.Timeout}
+	provider.HTTPClient = http.Client{Timeout: cfg.Timeout, Transport: telemetry.Transport(nil)}
 	if e = openstack.Authenticate(ctx, provider, cfg.Auth); e != nil {
 		return nil, fmt.Errorf("OpenStack authentication failed")
 	}
