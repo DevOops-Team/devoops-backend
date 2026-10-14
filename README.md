@@ -104,47 +104,53 @@ TEST_MONGO_URI='mongodb://127.0.0.1:27018/?replicaSet=rs0&directConnection=true'
 
 ### Jenkins
 
-저장소 루트의 `Jenkinsfile`은 정적 검사, 단위 테스트, MongoDB replica set 통합 테스트,
-Docker 이미지 빌드 및 GHCR push를 순서대로 실행합니다. 이미지 태그는
-`ghcr.io/devoops-team/devoops-backend:<빌드번호>-<커밋>`입니다.
-업로드 성공 후 collabops `devoops/devoops-infra`의 `kustomization.yaml`에서
-백엔드 이미지의 `newTag`를 갱신하고 커밋·push합니다.
-인프라 대상 브랜치는 `main`으로 고정하며 새 브랜치는 생성하지 않습니다.
-갱신 경로는 `k8s/portal/overlays/staging/kustomization.yaml`로 고정합니다.
-인프라 저장소 루트에는 `Infra/` 접두사가 없습니다. 변경 예시는 다음과 같습니다.
+이슈 #90의 최종 결정(2026-10-14 14:21 댓글, CR-60·62·63)에 맞춰 브랜치별로 동작합니다.
 
-```yaml
-images:
-  - name: ghcr.io/devoops-team/devoops-backend
-    newTag: 42-0123456789ab
-```
+| 백엔드 브랜치 | Jenkins 동작 | 인프라 변경 |
+| --- | --- | --- |
+| `develop` | vet·단위/통합 테스트·Docker build·Trivy·GHCR push | `main`의 `k8s/portal/overlays/staging/kustomization.yaml` |
+| `main` | 새 빌드 없이 같은 tree의 GHCR 이미지 조회 | `main`의 `k8s/portal/overlays/prod/kustomization.yaml` |
+| 그 외 | 중단 | 없음 |
 
-Deployment 원본과 프론트 이미지 설정은 유지합니다. 인프라 `main`에 이미지 태그 변경을
-직접 push하며, Argo CD가 미러의 `main`을 동기화하면 staging에 반영됩니다.
-클러스터 직접 배포는 포함하지 않습니다.
+staging 태그 갱신은 자동입니다. staging 동기화·서비스 검증 후 사람이 백엔드 `develop → main` CR을
+승인·머지하면 동일 이미지가 prod로 승격됩니다. 별도의 인프라 prod CR은 생성하지 않습니다.
+백엔드 main 브랜치의 CR 승인·직접 push 차단 규칙은 collabops에서 설정해야 합니다.
 
-Jenkins Pipeline 작업의 **Configure → Pipeline**에서 다음과 같이 설정합니다.
+배포 참조는 `newTag` 대신 불변 `digest: sha256:...`를 사용합니다. GHCR에는 빌드별 태그와
+내용 해시 기반 `tree-<해시>` 태그를 사용합니다. 승격용 tree 태그는 staging 매니페스트 갱신 성공 후
+같은 digest로 발행합니다. main 내용에 대응하는 태그가 없으면 prod 변경 전에 실패합니다.
+매니페스트 갱신 성공은 Argo CD Healthy나 실제 서비스 검증 완료를 의미하지 않으므로 CR 승인 전에 확인합니다.
+
+인프라 저장소의 `ci/update-image.sh`를 호출하며 staging·prod 모두 collabops 원본 `main`에
+직접 반영합니다. GitHub 미러에는 쓰지 않습니다. Kustomize와 `co` 인증은 필요하지 않습니다.
+클러스터 직접 배포도 하지 않습니다.
+
+Jenkins Pipeline 작업의 Configure → Pipeline에서 다음과 같이 설정합니다.
 
 | 항목 | 값 |
 | --- | --- |
 | Definition | Pipeline script from SCM |
 | SCM | Git |
 | Repository URL | `git@collabops.ai:devoops/devoops-backend.git` |
-| Credentials | collabops 읽기 권한이 있는 SSH 개인키 Credential |
-| Branch Specifier | `*/develop` |
+| Credentials | collabops 읽기용 SSH Credential |
+| Branches to build | `*/develop`, `*/main`을 각각 추가 |
 | Script Path | `Jenkinsfile` |
+| Build Triggers → Poll SCM | `H/2 * * * *` |
 
-실행 가능한 Linux 에이전트에 Git, Go 1.26 이상, Make, Bash, GCC, Kustomize,
-Docker Engine, kubectl, mongosh를 설치합니다. Jenkins 실행 계정에
-Docker 사용 권한을 부여하고 collabops SSH 호스트 키를 등록합니다.
-Pipeline, Git, Credentials Binding, SSH Agent 플러그인이 필요합니다.
-`ghcr-push`는 Username with password 타입으로 GitHub 사용자명 / GHCR push 토큰을 등록합니다.
-`collabops-infra-write`는 SSH Username with private key 타입으로 Username `git`과 개인키를 등록합니다.
-짝인 공개키를 collabops 계정의 SSH Keys에 등록하고 그 계정에 infra 읽기·쓰기 권한을 부여합니다.
-에이전트에 OpenSSH 클라이언트(`ssh`, `ssh-agent`)와 검증된 collabops 호스트 키가 포함된
-`~/.ssh/known_hosts`가 필요합니다. 인프라 clone과 push는 모두 SSH를 사용합니다.
-인프라 대상 브랜치가 미리 존재하고 직접 push가 허용되어야 합니다.
-원격 변경과 충돌하면 강제 push 없이 실패합니다.
+별도 Multibranch Pipeline을 사용한다면 develop·main을 각각 발견하도록 설정합니다.
+기존 빌드 Replay가 아닌 최신 Jenkinsfile의 새 빌드를 실행합니다.
+
+실행 노드에는 Git, Bash, awk, OpenSSH, Docker가 필요합니다. develop 빌드에는 추가로
+Go 1.26 이상, Make, GCC, kubectl, mongosh, Trivy가 필요합니다.
+Trivy HIGH·CRITICAL 취약점 검사 실패 시 이미지 발행·인프라 변경을 진행하지 않습니다.
+`ghcr-push`는 Username with password 타입의 GitHub 사용자명 / GHCR push 토큰입니다.
+
+인프라 SSH 키는 이슈 댓글에서 확인한 컨테이너 경로
+`/var/jenkins_home/.ssh/id_ed25519_collabops_ci`를 사용합니다(사용자 jenkins, 권한 600).
+짝인 공개키를 collabops 계정에 등록하고 infra 읽기·쓰기 권한을 부여합니다.
+검증된 collabops 호스트 키를 Jenkins의 `~/.ssh/known_hosts`에 등록합니다.
+기존 `collabops-infra-write` Credential 및 SSH Agent 플러그인은 최신 인프라 갱신 단계에서 사용하지 않습니다.
+
 Jenkins 통합 테스트는 `scripts/test-k8s-integration.sh`로 K8s `vdi-staging`의
 `svc/mongodb:27017`에 port-forward합니다. `k8s-staging-mongo` Credential을 Secret file 타입으로
 등록하고 staging 전용 kubeconfig를 업로드합니다. 실행 에이전트에서 staging API에 접근할 수 있어야 하며,

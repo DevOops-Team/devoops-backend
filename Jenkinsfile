@@ -42,16 +42,27 @@ pipeline {
         }
 
         stage('Check tools') {
-            when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
                 sh '''
                     set -eu
+                    for tool in git bash awk ssh docker; do
+                        command -v "$tool" >/dev/null
+                    done
+                    test -r "$INFRA_SSH_KEY"
+                    docker version
+                '''
+                script {
+                    if (env.DEPLOY_ENV == 'staging') {
+                        sh '''
+                    set -eu
                     go version
                     gcc --version
-                    docker version
                     kubectl version --client
                     mongosh --version
-                '''
+                    trivy --version
+                        '''
+                    }
+                }
             }
         }
 
@@ -84,7 +95,17 @@ pipeline {
             steps {
                 sh '''
                     set -eu
-                    docker build -t "$IMAGE_NAME:$IMAGE_TAG" .
+                    docker build --pull -t "$IMAGE_NAME:$IMAGE_TAG" .
+                '''
+            }
+        }
+
+        stage('Trivy') {
+            when { expression { env.DEPLOY_ENV == 'staging' } }
+            steps {
+                sh '''
+                    trivy image --scanners vuln --severity HIGH,CRITICAL \
+                        --exit-code 1 --no-progress "$IMAGE_NAME:$IMAGE_TAG"
                 '''
             }
         }
@@ -101,9 +122,7 @@ pipeline {
                         trap 'rm -rf "$DOCKER_CONFIG"' EXIT
                         printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
                         docker push "$IMAGE_NAME:$IMAGE_TAG"
-                        # main 머지 때 이 tree 태그로 "staging에서 검증한 그 이미지"를 찾는다
-                        docker tag "$IMAGE_NAME:$IMAGE_TAG" "$IMAGE_NAME:tree-$TREE"
-                        docker push "$IMAGE_NAME:tree-$TREE"
+                        # 승격용 tree 태그는 staging 갱신 성공 후 별도 단계에서 발행한다.
                         docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE_NAME:$IMAGE_TAG" | sed 's/.*@//' > "$WORKSPACE/.deploy-digest"
                     '''
                 }
@@ -142,12 +161,34 @@ pipeline {
                         set -eu
                         DIGEST="$(cat "$WORKSPACE/.deploy-digest")"
                         case "$DIGEST" in sha256:*) ;; *) echo "digest 없음"; exit 1 ;; esac
-                        export GIT_SSH_COMMAND="ssh -i $INFRA_SSH_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+                        export GIT_SSH_COMMAND="ssh -i $INFRA_SSH_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
                         git clone -q --depth 1 -b main "$INFRA_REPO" infra
                         rc=0
                         bash infra/ci/update-image.sh "$DEPLOY_ENV" "$IMAGE_NAME" "$DIGEST" "jenkins #$BUILD_NUMBER tree-$TREE" || rc=$?
                         # 0 = 반영, 3 = 이미 같은 이미지
                         [ "$rc" = 0 ] || [ "$rc" = 3 ]
+                    '''
+                }
+            }
+        }
+
+        stage('Publish promotion tag') {
+            // staging manifest push 실패 시 main에서 찾을 승격 태그를 만들지 않는다.
+            when { expression { env.DEPLOY_ENV == 'staging' } }
+            steps {
+                withCredentials([usernamePassword(credentialsId: env.GHCR_CREDENTIALS,
+                    usernameVariable: 'GHCR_USERNAME', passwordVariable: 'GHCR_TOKEN')]) {
+                    sh '''
+                        set +x
+                        set -eu
+                        export DOCKER_CONFIG="$(mktemp -d)"
+                        trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+                        printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+                        EXPECTED="$(cat "$WORKSPACE/.deploy-digest")"
+                        # Tag the exact pushed digest, even if a local tag changed meanwhile.
+                        docker pull -q "$IMAGE_NAME@$EXPECTED" >/dev/null
+                        docker tag "$IMAGE_NAME@$EXPECTED" "$IMAGE_NAME:tree-$TREE"
+                        docker push "$IMAGE_NAME:tree-$TREE"
                     '''
                 }
             }
