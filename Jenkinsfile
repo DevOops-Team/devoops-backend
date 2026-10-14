@@ -9,15 +9,12 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
-    parameters {
-        string(name: 'MANIFEST_DIR', defaultValue: 'k8s/portal/overlays/prod', description: '이미지 newTag를 갱신할 kustomization.yaml 디렉터리')
-    }
-
     environment {
         MONGO_KUBECONFIG_CREDENTIALS = 'k8s-staging-mongo'
         IMAGE_NAME = 'ghcr.io/devoops-team/devoops-backend'
         INFRA_REPO = 'git@collabops.ai:devoops/devoops-infra.git'
         INFRA_BRANCH = 'main'
+        MANIFEST_DIR = 'k8s/portal/overlays/staging'
         INFRA_CREDENTIALS = 'collabops-infra-write'
         GHCR_CREDENTIALS = 'ghcr-push'
     }
