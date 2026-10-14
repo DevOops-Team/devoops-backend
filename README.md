@@ -109,7 +109,8 @@ Docker 이미지 빌드 및 GHCR push를 순서대로 실행합니다. 이미지
 `ghcr.io/devoops-team/devoops-backend:<빌드번호>-<커밋>`입니다.
 업로드 성공 후 collabops `devoops/devoops-infra`의 `kustomization.yaml`에서
 백엔드 이미지의 `newTag`를 갱신하고 커밋·push합니다.
-`INFRA_BRANCH` 기본값은 `develop`, `MANIFEST_DIR` 기본값은 `k8s/portal/overlays/prod`입니다.
+인프라 대상 브랜치는 `main`으로 고정하며 새 브랜치는 생성하지 않습니다.
+`MANIFEST_DIR` 기본값은 `k8s/portal/overlays/prod`입니다.
 인프라 저장소 루트에는 `Infra/` 접두사가 없습니다. 변경 예시는 다음과 같습니다.
 
 ```yaml
@@ -118,8 +119,9 @@ images:
     newTag: 42-0123456789ab
 ```
 
-Deployment 원본과 프론트 이미지 설정은 유지합니다. 인프라 `main` 병합 및
-클러스터 직접 배포는 포함하지 않습니다. Argo CD가 `main`을 추적한다면 별도 병합이 필요합니다.
+Deployment 원본과 프론트 이미지 설정은 유지합니다. 인프라 `main`에 이미지 태그 변경을
+직접 push하며, Argo CD가 미러의 `main`을 동기화하면 운영에 반영됩니다.
+클러스터 직접 배포는 포함하지 않습니다.
 
 Jenkins Pipeline 작업의 **Configure → Pipeline**에서 다음과 같이 설정합니다.
 

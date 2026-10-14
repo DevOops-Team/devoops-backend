@@ -10,7 +10,6 @@ pipeline {
     }
 
     parameters {
-        string(name: 'INFRA_BRANCH', defaultValue: 'develop', description: '이미지 태그를 갱신할 인프라 브랜치')
         string(name: 'MANIFEST_DIR', defaultValue: 'k8s/portal/overlays/prod', description: '이미지 newTag를 갱신할 kustomization.yaml 디렉터리')
     }
 
@@ -18,6 +17,7 @@ pipeline {
         MONGO_KUBECONFIG_CREDENTIALS = 'k8s-staging-mongo'
         IMAGE_NAME = 'ghcr.io/devoops-team/devoops-backend'
         INFRA_REPO = 'git@collabops.ai:devoops/devoops-infra.git'
+        INFRA_BRANCH = 'main'
         INFRA_CREDENTIALS = 'collabops-infra-write'
         GHCR_CREDENTIALS = 'ghcr-push'
     }
@@ -98,7 +98,7 @@ pipeline {
             steps {
                 dir('infra-manifests') {
                     deleteDir()
-                    git branch: params.INFRA_BRANCH,
+                    git branch: env.INFRA_BRANCH,
                         credentialsId: env.INFRA_CREDENTIALS,
                         url: env.INFRA_REPO
                     sshagent(credentials: [env.INFRA_CREDENTIALS]) {
