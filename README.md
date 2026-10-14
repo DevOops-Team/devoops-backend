@@ -102,6 +102,30 @@ TEST_MONGO_URI='mongodb://127.0.0.1:27018/?replicaSet=rs0&directConnection=true'
 
 ## 배포
 
+### Jenkins
+
+저장소 루트의 `Jenkinsfile`은 정적 검사, 단위 테스트, MongoDB replica set 통합 테스트,
+Docker 이미지 빌드를 순서대로 실행합니다. 이미지 태그는 `vdi-api:<빌드번호>-<커밋>`입니다.
+레지스트리 push 및 Kubernetes 배포는 포함하지 않습니다.
+
+Jenkins Pipeline 작업의 **Configure → Pipeline**에서 다음과 같이 설정합니다.
+
+| 항목 | 값 |
+| --- | --- |
+| Definition | Pipeline script from SCM |
+| SCM | Git |
+| Repository URL | `git@collabops.ai:devoops/devoops-backend.git` |
+| Credentials | collabops 읽기 권한이 있는 SSH 개인키 Credential |
+| Branch Specifier | `*/develop` |
+| Script Path | `Jenkinsfile` |
+
+`backend-ci` 라벨을 가진 전용 Linux 에이전트에 Git, Go 1.26 이상, Make, Bash, GCC,
+Docker Engine, Docker Compose v2(`--wait` 지원)를 설치합니다. Jenkins 실행 계정에
+Docker 사용 권한을 부여하고 collabops SSH 호스트 키를 등록합니다.
+Pipeline 및 Git 플러그인이 필요합니다. 통합 테스트가 호스트 포트 `27018`을 사용하므로
+해당 포트를 다른 작업에서 사용하지 않아야 합니다. 테스트 MongoDB는 통합 테스트 종료 시
+정리됩니다. Dockerfile의 기본 Go 버전은 1.26이며 `--build-arg GO_VERSION=...`으로 변경할 수 있습니다.
+
 ```bash
 docker build -t vdi-api:local .
 # image 태그를 실제 레지스트리 주소로 변경 후 배포 환경에서 실행

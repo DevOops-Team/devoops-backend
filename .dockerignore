@@ -4,3 +4,8 @@
 docs
 prd.md
 deploy
+bin
+Jenkinsfile
+README.md
+compose.test.yaml
+scripts
