@@ -6,7 +6,7 @@ triggers:
   push:
     branches: ["**"]
   change_request:
-    branches: [main]
+    branches: [main, develop]   # 본인 브랜치 → develop CR도 검사 (10-14 흐름). develop에도 이 파일이 있어야 develop 대상 CR에 검사가 돈다
   workflow_dispatch: {}
 env:
   REPO_URL: "https://collabops.ai/devoops/devoops-backend.git"
