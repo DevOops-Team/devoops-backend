@@ -134,6 +134,16 @@ func (a *App) wrap(admin bool, f endpoint) http.HandlerFunc {
 }
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
+	// Kubernetes startup/readiness/liveness probes use this path.
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := a.Store.DB.Client().Ping(ctx, nil); err != nil {
+			respond(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+			return
+		}
+		respond(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
 	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		if e := a.login(w, r); e != nil {
 			failure(w, e)
@@ -142,6 +152,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/logout", a.wrap(false, a.logout))
 	mux.HandleFunc("GET /api/me", a.wrap(false, func(w http.ResponseWriter, r *http.Request, u User) error { respond(w, 200, u); return nil }))
 	mux.HandleFunc("GET /api/images", a.wrap(false, a.images))
+	mux.HandleFunc("GET /api/images/{osId}/spec", a.wrap(false, a.imageSpec))
 	mux.HandleFunc("GET /api/desktops", a.wrap(false, a.desktops))
 	mux.HandleFunc("POST /api/desktops", a.wrap(false, a.create))
 	mux.HandleFunc("GET /api/desktops/{desktopId}", a.wrap(false, a.desktop))
@@ -317,6 +328,33 @@ func (a *App) images(w http.ResponseWriter, r *http.Request, _ User) error {
 	respond(w, 200, out)
 	return nil
 }
+
+// The create form must use the actual flavor/image combination, rather than
+// guessing a CPU, RAM or disk size. Keep infrastructure IDs private.
+func (a *App) imageSpec(w http.ResponseWriter, r *http.Request, _ User) error {
+	if e := noBody(r); e != nil {
+		return e
+	}
+	n, e := id(r.PathValue("osId"), "osId")
+	if e != nil {
+		return e
+	}
+	var im OS
+	e = a.Store.C("os").FindOne(r.Context(), bson.M{"id": n}).Decode(&im)
+	if errors.Is(e, mongo.ErrNoDocuments) {
+		return Err(404, "OS_NOT_FOUND", "OS를 찾을 수 없습니다.")
+	}
+	if e != nil {
+		return e
+	}
+	spec, e := a.Cloud.Spec(r.Context(), im.ImageID)
+	if e != nil {
+		return e
+	}
+	respond(w, 200, map[string]any{"osId": n, "cpuCores": spec.CPUCores, "memoryGb": spec.MemoryGB, "storageGb": spec.StorageGB})
+	return nil
+}
+
 func (a *App) desktops(w http.ResponseWriter, r *http.Request, u User) error {
 	f := bson.M{"deleted": false}
 	if strings.HasPrefix(r.URL.Path, "/api/admin/") {
@@ -513,7 +551,8 @@ func (a *App) create(w http.ResponseWriter, r *http.Request, u User) error {
 		if ok, e := replay(c); e != nil || ok {
 			return e
 		}
-		if _, e = a.Store.User(c, target); e != nil {
+		owner, e := a.Store.User(c, target)
+		if e != nil {
 			return e
 		}
 		// Any cleanup-pending failed VM must be resolved before accepting a fresh retry.
@@ -524,7 +563,11 @@ func (a *App) create(w http.ResponseWriter, r *http.Request, u User) error {
 		if pending > 0 {
 			return Err(409, "OPERATION_IN_PROGRESS", "실패 자원 정리가 진행 중입니다.")
 		}
-		res, e := a.Store.C("users").UpdateOne(c, bson.M{"id": target, "deleted": false, "reserved": bson.M{"$lt": 2}}, bson.M{"$inc": bson.M{"reserved": 1, "version": 1}})
+		quota := bson.M{"id": target, "deleted": false, "reserved": bson.M{"$lt": 2}}
+		if owner.Role == "ADMIN" {
+			delete(quota, "reserved")
+		}
+		res, e := a.Store.C("users").UpdateOne(c, quota, bson.M{"$inc": bson.M{"reserved": 1, "version": 1}})
 		if e != nil {
 			return e
 		}

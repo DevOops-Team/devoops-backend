@@ -247,6 +247,9 @@ func (w *Worker) Tick(ctx context.Context) error {
 		case "ACTIVE":
 			d.Status = "RUNNING"
 			if w.Cloud.Ready(ctx, vm.IP) {
+				if d.Phase == "monitor" {
+					event = "DESKTOP_READY"
+				}
 				d.ConnectionState = "READY"
 				d.Phase = "watch"
 				d.Failure = nil

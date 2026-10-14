@@ -2,7 +2,7 @@
 
 [prd.md](prd.md) 및 [Notion API 명세](https://app.notion.com/p/dc4b52ad1e3e83609bd881ce641fedd9)를 구현한 Go 백엔드입니다. 최초 구현 시 확인한 18개 상세 계약은 [docs/reference/notion-contracts.json](docs/reference/notion-contracts.json)에 보관했습니다. 기존 Python/Kubernetes Pod 목업을 런타임에 사용하지 않습니다.
 
-Go 표준 HTTP 서버, MongoDB 공식 드라이버, Gophercloud OpenStack SDK를 사용합니다. API와 영속 작업자가 한 프로세스에서 실행됩니다. 공개 API는 `/api` 아래 18개이며, 공개 DTO에 MongoDB 내부 필드·VM ID·IP·비밀번호를 노출하지 않습니다.
+Go 표준 HTTP 서버, MongoDB 공식 드라이버, Gophercloud OpenStack SDK를 사용합니다. API와 영속 작업자가 한 프로세스에서 실행됩니다. 공개 API는 기존 18개와 프론트 연동용 사양 조회 1개로 구성되며, 공개 DTO에 MongoDB 내부 필드·VM ID·IP·비밀번호를 노출하지 않습니다.
 
 ## 실행
 
@@ -19,6 +19,8 @@ curl -i http://localhost:8080/api/auth/login \
 ```
 
 초기 관리자 기본 계약은 `admin` / `admin@example.com` / `secret`이며 예제 Secret에서 주입합니다. 최초 부트스트랩 표시를 DB에 기록하므로 재시작 시 기존 관리자 이름·역할·비밀번호를 덮어쓰거나 삭제된 계정을 재생성하지 않습니다. 일반 사용자는 관리자 API로 추가합니다.
+
+프론트엔드 연결·실행 및 통합 검증 방법은 [docs/frontend-integration.md](docs/frontend-integration.md)를 참고하세요.
 
 ## 설정
 
@@ -42,9 +44,9 @@ curl -i http://localhost:8080/api/auth/login \
 | `READY_TIMEOUT` | 생성·RDP 준비 제한, 기본 `15m` |
 | `GUAC_URL_TTL` | 새 Guacamole URL 사용기한, 기본 `2m` |
 
-등록 가능한 OS 타입은 `UBUNTU`, `WINDOWS`, `ROCKY`, `DEBIAN`입니다. 등록 배열이 비어 있으면 이미지 목록도 비어 있습니다. DB에 OS 등록을 저장하고, 목록 및 생성 시 실제 Glance 이미지와 `m1.micro`를 검사합니다. OS 내부 `imageId`는 API JSON에서 제외합니다.
+등록 가능한 OS 타입은 `UBUNTU`, `WINDOWS`, `ROCKY`, `DEBIAN`입니다. 등록 배열이 비어 있으면 이미지 목록도 비어 있습니다. DB에 OS 등록을 저장하고, 목록 및 생성 시 실제 Glance 이미지와 Flavor를 검사합니다. Flavor는 이미지 `os_distro`가 `windows`이면 `m1.windows`, 그 밖에는 `m1.micro`입니다. OS 내부 `imageId`는 API JSON에서 제외합니다.
 
-Flavor RAM(MiB)은 1024의 배수여야 합니다. 루트 디스크가 0이면 Glance `virtual_size`(byte)가 양의 정수 GiB로 정확히 표현되어야 합니다. `min_disk`를 실제 크기로 대신 사용하지 않습니다. RAM/디스크를 반올림하지 않고 호환되지 않는 조합은 가용 목록에서 제외합니다. 생성 입력 사양이 실제 허용 사양과 다르면 400 검증 오류, 표현 불가능한 Flavor는 409 `SPEC_UNAVAILABLE`, 비가용 이미지는 409 `OS_UNAVAILABLE`입니다. 현재 계약에는 사양 안내 API가 없어 운영자가 실제 허용 CPU/RAM/디스크를 프론트에 전달해야 합니다.
+Flavor RAM(MiB)은 1024의 배수여야 합니다. 루트 디스크가 0이면 Glance `virtual_size`(byte)가 양의 정수 GiB로 정확히 표현되어야 합니다. `min_disk`를 실제 크기로 대신 사용하지 않습니다. RAM/디스크를 반올림하지 않고 호환되지 않는 조합은 가용 목록에서 제외합니다. 생성 입력 사양이 실제 허용 사양과 다르면 400 검증 오류, 표현 불가능한 Flavor는 409 `SPEC_UNAVAILABLE`, 비가용 이미지는 409 `OS_UNAVAILABLE`입니다. 프론트 연동용 `GET /api/images/{osId}/spec`은 선택 OS의 실제 허용 사양을 반환합니다. 프론트 생성 폼이 이 값을 조회하며, 생성 시 서버에서 다시 검증합니다.
 
 ## API
 
@@ -56,6 +58,7 @@ Flavor RAM(MiB)은 1024의 배수여야 합니다. 루트 디스크가 0이면 G
 | POST | `/api/auth/logout` | 204, 본문 없음 |
 | GET | `/api/me` | 200 |
 | GET | `/api/images` | 200 |
+| GET | `/api/images/{osId}/spec` | 200 |
 | GET / POST | `/api/desktops` | 200 / 202 |
 | GET / DELETE | `/api/desktops/{desktopId}` | 200 / 202 |
 | POST | `/api/desktops/{desktopId}/connect` | 200 |
@@ -70,10 +73,13 @@ Flavor RAM(MiB)은 1024의 배수여야 합니다. 루트 디스크가 0이면 G
 
 관리자 데스크톱 목록만 `userId` 필터를 받습니다. 감사 이벤트는 `limit`(기본 100, 1~500), `actorId`, `desktopId`, `action`, `targetType`을 지원하며 생성 시각 내림차순입니다. 상세 enum과 DTO는 저장된 Notion 계약을 참고하세요.
 
+`GET /api/images/{osId}/spec`은 `{osId,cpuCores,memoryGb,storageGb}`를 반환하며 이미지·Flavor 내부 ID는 노출하지 않습니다. 다른 API와 동일하게 Bearer 인증이 필요합니다.
+
 ## 저장·복구 동작
 
 - 세션은 32byte 무작위 토큰의 SHA-256 해시만 저장합니다. 비밀번호는 bcrypt로 저장하며 입력은 1~72byte입니다. 요청마다 8시간 고정 만료를 검사합니다. 로그아웃은 현재 세션 삭제와 `LOGOUT` 이벤트를 같은 트랜잭션으로 저장합니다.
-- 사용자당 최대 2개의 예약을 원자적으로 확보합니다. 관리자 할당도 같은 한도입니다. 생성·요청 원본 응답·24시간 멱등 기록·감사 이벤트를 하나의 MongoDB 트랜잭션으로 저장합니다. 재전송은 한도나 현재 인프라 상태가 바뀌어도 최초 응답을 재사용합니다.
+- USER 역할은 최대 2개의 예약을 원자적으로 확보합니다. 관리자가 USER에게 할당할 때도 같은 한도입니다. ADMIN 역할 소유 데스크톱은 개수 제한이 없습니다. 생성·요청 원본 응답·24시간 멱등 기록·감사 이벤트를 하나의 MongoDB 트랜잭션으로 저장합니다. 재전송은 한도나 현재 인프라 상태가 바뀌어도 최초 응답을 재사용합니다.
+- VM이 처음 RUNNING·READY가 되면 `DESKTOP_READY` 이벤트를 1회 기록합니다. 같은 `desktopId`의 `DESKTOP_CREATE`(또는 `DESKTOP_ASSIGN`)와 시각 차이가 생성 → 준비 소요 시간입니다.
 - 작업 상태와 lease는 desktop 문서에 함께 저장합니다. 원자적 선점, lease 만료 복구, revision 조건 갱신으로 중복 작업과 API 삭제 경쟁을 처리합니다. 재시작 후 접수된 요청을 다시 조회합니다.
 - Nova POST를 호출하기 **전에** 제출 상태를 저장합니다. 응답 유실이나 제출 직후 프로세스 종료는 서비스·desktop metadata로 복구합니다. 빈 조회만으로 미생성을 단정하지 않고 다시 POST하지 않습니다. 결과가 끝내 불확실하면 ERROR 기록과 예약을 유지하며 복구를 계속합니다. 운영자는 Nova 상태와 metadata를 확인해야 하며, 불확실 작업의 수동 해결용 공개 API는 제공하지 않습니다.
 - 명확한 Nova 요청 거부는 실패를 기록하고 한도를 반환합니다. VM/RDP 준비 실패는 VM을 삭제한 뒤 실제 부재를 확인해야 한도를 반환합니다. 정리 실패 중 새 생성 재시도는 거부합니다. 중복 metadata 자원도 모두 정리합니다.
@@ -102,6 +108,74 @@ TEST_MONGO_URI='mongodb://127.0.0.1:27018/?replicaSet=rs0&directConnection=true'
 
 ## 배포
 
+### Jenkins
+
+이슈 #90의 최종 결정(2026-10-14 14:21 댓글, CR-60·62·63)에 맞춰 브랜치별로 동작합니다.
+
+| 백엔드 브랜치 | Jenkins 동작 | 인프라 변경 |
+| --- | --- | --- |
+| `develop` | vet·단위/통합 테스트·Docker build·Trivy·GHCR push | `main`의 `k8s/portal/overlays/staging/kustomization.yaml` |
+| `main` | 새 빌드 없이 같은 tree의 GHCR 이미지 조회 | `main`의 `k8s/portal/overlays/prod/kustomization.yaml` |
+| 그 외 | 중단 | 없음 |
+
+staging 태그 갱신은 자동입니다. staging 동기화·서비스 검증 후 사람이 백엔드 `develop → main` CR을
+승인·머지하면 동일 이미지가 prod로 승격됩니다. 별도의 인프라 prod CR은 생성하지 않습니다.
+백엔드 main 브랜치의 CR 승인·직접 push 차단 규칙은 collabops에서 설정해야 합니다.
+
+배포 참조는 `newTag` 대신 불변 `digest: sha256:...`를 사용합니다. GHCR에는 빌드별 태그와
+내용 해시 기반 `tree-<해시>` 태그를 사용합니다. 승격용 tree 태그는 staging 매니페스트 갱신 성공 후
+같은 digest로 발행합니다. main 내용에 대응하는 태그가 없으면 prod 변경 전에 실패합니다.
+매니페스트 갱신 성공은 Argo CD Healthy나 실제 서비스 검증 완료를 의미하지 않으므로 CR 승인 전에 확인합니다.
+
+인프라 저장소의 `ci/update-image.sh`를 호출하며 staging·prod 모두 collabops 원본 `main`에
+직접 반영합니다. GitHub 미러에는 쓰지 않습니다. Kustomize와 `co` 인증은 필요하지 않습니다.
+클러스터 직접 배포도 하지 않습니다.
+
+권장 구성은 프론트와 같은 **Multibranch Pipeline**입니다. Branch Source에 백엔드 저장소와
+읽기 Credential을 연결하고 브랜치 이름 필터를 `develop main`으로 설정합니다.
+Build Configuration의 Script Path는 `Jenkinsfile`입니다. develop·main이 각각 별도 작업으로 실행됩니다.
+PR 작업은 배포하지 않으며 다른 브랜치도 중단합니다.
+
+일반 Pipeline 작업을 유지한다면 다음 설정을 사용합니다.
+
+| 항목 | 값 |
+| --- | --- |
+| Definition | Pipeline script from SCM |
+| SCM | Git |
+| Repository URL | `git@collabops.ai:devoops/devoops-backend.git` |
+| Credentials | collabops 읽기용 SSH Credential |
+| Branches to build | `*/develop`, `*/main`을 각각 추가 |
+| Script Path | `Jenkinsfile` |
+| Build Triggers → Poll SCM | `H/2 * * * *` |
+
+Multibranch 작업은 브랜치별 webhook 또는 정기 scan으로 갱신하며,
+일반 Pipeline 작업은 위 Poll SCM을 사용합니다.
+기존 빌드 Replay가 아닌 최신 Jenkinsfile의 새 빌드를 실행합니다.
+
+실행 노드에는 Git, Bash, awk, OpenSSH, Docker가 필요합니다. develop 빌드에는 추가로
+Go 1.26 이상, Make, GCC, kubectl, mongosh, Trivy가 필요합니다.
+Trivy HIGH·CRITICAL 취약점 검사 실패 시 이미지 발행·인프라 변경을 진행하지 않습니다.
+`ghcr-push`는 Username with password 타입의 GitHub 사용자명 / GHCR push 토큰입니다.
+
+인프라 SSH 키는 이슈 댓글에서 확인한 컨테이너 경로
+`/var/jenkins_home/.ssh/id_ed25519_collabops_ci`를 사용합니다(사용자 jenkins, 권한 600).
+짝인 공개키를 collabops 계정에 등록하고 infra 읽기·쓰기 권한을 부여합니다.
+검증된 collabops 호스트 키를 Jenkins의 `~/.ssh/known_hosts`에 등록합니다.
+기존 `collabops-infra-write` Credential 및 SSH Agent 플러그인은 최신 인프라 갱신 단계에서 사용하지 않습니다.
+
+Jenkins 통합 테스트는 `scripts/test-k8s-integration.sh`로 K8s `vdi-staging`의
+`svc/mongodb:27017`에 port-forward합니다. `k8s-staging-mongo` Credential을 Secret file 타입으로
+등록하고 staging 전용 kubeconfig를 업로드합니다. 실행 에이전트에서 staging API에 접근할 수 있어야 하며,
+해당 계정에는 `vdi-staging`의 Services get, Pods get/list, Pods/portforward create 권한이 필요합니다.
+운영 admin kubeconfig를 사용하지 않습니다. 기존 문서 #28의 Jenkins 네트워크 분리 구성에서는
+staging API 접속 허용과 제한된 CI 계정 발급이 먼저 필요합니다.
+
+터널은 `127.0.0.1`의 자동 할당 포트를 사용합니다. replica set primary 준비 확인 후
+`TEST_MONGO_URI`를 주입해 테스트하며, 성공·실패 시 터널을 종료합니다. Jenkins에서는 Docker MongoDB를
+생성하지 않습니다. 테스트는 staging 서버에 고유 임시 DB를 생성하고 삭제하며 기존 앱 DB는 사용하지 않습니다.
+로컬 `make test-integration`의 Docker Compose 방식은 유지됩니다.
+Dockerfile의 기본 Go 버전은 1.26이며 `--build-arg GO_VERSION=...`으로 변경할 수 있습니다.
+
 ```bash
 docker build -t vdi-api:local .
 # image 태그를 실제 레지스트리 주소로 변경 후 배포 환경에서 실행
@@ -112,6 +186,6 @@ kubectl apply -f deploy/deployment.yaml
 
 Deployment 기본 replica는 1입니다. `Recreate` 전략과 종료 유예로 교체 시 진행 중 작업을 정리하고, 중단된 작업은 lease 만료 후 복구합니다. 컨테이너는 non-root, 읽기 전용 파일시스템으로 실행됩니다. TLS 종료·Ingress는 운영 환경에서 구성해야 합니다.
 
-외부 준비 조건은 MongoDB replica set, 접근 가능한 Keystone/Nova/Glance, `m1.micro`, 등록한 Glance 이미지, VM 네트워크·RDP 보안 그룹, RDP가 준비된 이미지와 OS별 계정, Guacamole JSON 인증 확장 및 동일 공유키입니다. 서비스 계정은 프로젝트 VM 목록과 지정 이미지·Flavor를 조회할 수 있어야 합니다. 백엔드와 Guacamole에서 VM IP로 RDP 접근이 가능해야 합니다.
+외부 준비 조건은 MongoDB replica set, 접근 가능한 Keystone/Nova/Glance, `m1.micro`·`m1.windows`, 등록한 Glance 이미지, VM 네트워크·RDP 보안 그룹, RDP가 준비된 이미지와 OS별 계정, Guacamole JSON 인증 확장 및 동일 공유키입니다. 서비스 계정은 프로젝트 VM 목록과 지정 이미지·Flavor를 조회할 수 있어야 합니다. 백엔드와 Guacamole에서 VM IP로 RDP 접근이 가능해야 합니다.
 
 실제 OpenStack VM 생성·Guacamole 브라우저 접속·삭제 E2E 및 운영 배포는 별도 검증 단계이며 이 저장소의 HTTP 대체 테스트 통과와 구분합니다. 로그아웃은 VM 또는 이미 열린 Guacamole 연결을 종료하지 않습니다. Cinder, 공개 회원가입, VM 시작/중지, 프론트, 메트릭 API는 구현 범위에 포함하지 않습니다.

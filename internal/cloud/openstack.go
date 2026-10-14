@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -51,9 +52,23 @@ func New(ctx context.Context, cfg Config) (*OpenStack, error) {
 	}
 	return &OpenStack{compute, image, cfg}, nil
 }
+func FlavorName(properties map[string]any) string {
+	if d, _ := properties["os_distro"].(string); strings.EqualFold(d, "windows") {
+		return "m1.windows"
+	}
+	return "m1.micro"
+}
 func (o *OpenStack) Spec(ctx context.Context, imageID string) (vdi.Spec, error) {
 	ctx, cancel := context.WithTimeout(ctx, o.Config.Timeout)
 	defer cancel()
+	im, e := images.Get(ctx, o.Image, imageID).Extract()
+	if e != nil {
+		if gophercloud.ResponseCodeIs(e, 404) {
+			return vdi.Spec{}, vdi.ErrOSUnavailable
+		}
+		return vdi.Spec{}, vdi.ErrCloudUnavailable
+	}
+	name := FlavorName(im.Properties)
 	p, e := flavors.ListDetail(o.Compute, flavors.ListOpts{}).AllPages(ctx)
 	if e != nil {
 		return vdi.Spec{}, vdi.ErrCloudUnavailable
@@ -64,7 +79,7 @@ func (o *OpenStack) Spec(ctx context.Context, imageID string) (vdi.Spec, error) 
 	}
 	var f *flavors.Flavor
 	for i := range fs {
-		if fs[i].Name == "m1.micro" {
+		if fs[i].Name == name {
 			if f != nil {
 				return vdi.Spec{}, vdi.ErrSpecUnavailable
 			}
@@ -73,13 +88,6 @@ func (o *OpenStack) Spec(ctx context.Context, imageID string) (vdi.Spec, error) 
 	}
 	if f == nil || f.VCPUs <= 0 || f.RAM <= 0 || f.RAM%1024 != 0 || f.Disk < 0 {
 		return vdi.Spec{}, vdi.ErrSpecUnavailable
-	}
-	im, e := images.Get(ctx, o.Image, imageID).Extract()
-	if e != nil {
-		if gophercloud.ResponseCodeIs(e, 404) {
-			return vdi.Spec{}, vdi.ErrOSUnavailable
-		}
-		return vdi.Spec{}, vdi.ErrCloudUnavailable
 	}
 	if im.Status != "active" || im.MinRAMMegabytes > f.RAM {
 		return vdi.Spec{}, vdi.ErrOSUnavailable

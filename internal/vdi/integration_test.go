@@ -270,6 +270,10 @@ func TestDesktopLifecycleAndGuacamole(t *testing.T) {
 	if v["connectionState"] != "READY" || v["canConnect"] != true {
 		t.Fatal(v)
 	}
+	f.tick(2)
+	if ready := f.list(fmt.Sprintf("/api/admin/events?action=DESKTOP_READY&desktopId=%d", n), f.admin); len(ready) != 1 {
+		t.Fatal("ready event", ready)
+	}
 	con := f.request("POST", path(n)+"/connect", user, nil, "", 200)
 	keys(t, con, "url", "expiresAt")
 	u, _ := url.Parse(con["url"].(string))
@@ -381,6 +385,9 @@ func TestConcurrentQuotaAndIdempotency(t *testing.T) {
 	f.request("POST", "/api/admin/desktops", f.admin, assign, uuid.NewString(), 202)
 	f.request("POST", "/api/admin/desktops", f.admin, assign, uuid.NewString(), 409)
 	f.request("POST", "/api/desktops", user, f.body(), key, 202) // replay ignores quota
+	for range 3 {
+		f.request("POST", "/api/desktops", f.admin, f.body(), uuid.NewString(), 202) // ADMIN has no quota
+	}
 }
 func TestAvailabilityValidation(t *testing.T) {
 	f := setup(t)
@@ -391,12 +398,12 @@ func TestAvailabilityValidation(t *testing.T) {
 	b := f.body()
 	b["cpuCores"] = 2
 	f.request("POST", "/api/desktops", f.admin, b, uuid.NewString(), 400)
-	f.cloud.Set(func(s *testinfra.OpenStack) { s.RAM = 512 })
+	f.cloud.Set(func(s *testinfra.OpenStack) { s.RAM = 512; s.WindowsRAM = 512 })
 	f.request("POST", "/api/desktops", f.admin, f.body(), uuid.NewString(), 409)
 	if len(f.list("/api/images", f.admin)) != 0 {
 		t.Fatal("incompatible images")
 	}
-	f.cloud.Set(func(s *testinfra.OpenStack) { s.RAM = 1024; s.Disk = 0; s.VirtualSize = 0 })
+	f.cloud.Set(func(s *testinfra.OpenStack) { s.RAM = 1024; s.WindowsRAM = 4096; s.Disk = 0; s.VirtualSize = 0 })
 	f.request("POST", "/api/desktops", f.admin, f.body(), uuid.NewString(), 409)
 	f.cloud.Set(func(s *testinfra.OpenStack) { s.VirtualSize = 10 << 30; s.MinDisk = 11 })
 	f.request("POST", "/api/desktops", f.admin, f.body(), uuid.NewString(), 409)
@@ -409,6 +416,34 @@ func TestAvailabilityValidation(t *testing.T) {
 	f.cloud.Set(func(s *testinfra.OpenStack) { s.ImageStatus = "active"; s.RejectToken = true })
 	if len(f.list("/api/images", f.admin)) != 4 {
 		t.Fatal("reauth")
+	}
+}
+func TestWindowsImageUsesWindowsFlavor(t *testing.T) {
+	f := setup(t)
+	var win vdi.OS
+	if e := f.store.C("os").FindOne(context.Background(), bson.M{"type": "WINDOWS"}).Decode(&win); e != nil {
+		t.Fatal(e)
+	}
+	b := map[string]any{"name": "윈도우", "osId": win.ID, "cpuCores": 1, "memoryGb": 1, "storageGb": 10}
+	f.request("POST", "/api/desktops", f.admin, b, uuid.NewString(), 400)
+	b["cpuCores"], b["memoryGb"] = 2, 4
+	f.request("POST", "/api/desktops", f.admin, b, uuid.NewString(), 202)
+	f.tick(1)
+	f.cloud.Mu.Lock()
+	last := f.cloud.LastCreate
+	f.cloud.Mu.Unlock()
+	if last["imageRef"] != "image-windows" || last["flavorRef"] != "flavor-windows" {
+		t.Fatal(last)
+	}
+	f.cloud.Set(func(s *testinfra.OpenStack) { s.WindowsRAM = 4000 })
+	images := f.list("/api/images", f.admin)
+	if len(images) != 3 {
+		t.Fatal(images)
+	}
+	for _, im := range images {
+		if im["type"] == "WINDOWS" {
+			t.Fatal("Windows listed without valid m1.windows")
+		}
 	}
 }
 func TestResponseLossRecoveryAndWorkerClaims(t *testing.T) {
@@ -611,17 +646,18 @@ func TestExpiredIdempotencyAndCommonErrors(t *testing.T) {
 func TestKnownCreateRejectionAndDuplicateCleanup(t *testing.T) {
 	t.Run("definitive rejection releases quota", func(t *testing.T) {
 		f := setup(t)
+		_, user := f.user("user@example.com", "USER")
 		f.cloud.Set(func(s *testinfra.OpenStack) { s.RejectCreate = true })
-		n := f.create(f.admin)
+		n := f.create(user)
 		f.tick(2)
-		v := f.request("GET", path(n), f.admin, nil, "", 200)
+		v := f.request("GET", path(n), user, nil, "", 200)
 		if v["status"] != "ERROR" || v["failure"].(map[string]any)["code"] != "OPENSTACK_CREATE_FAILED" {
 			t.Fatal(v)
 		}
 		f.cloud.Set(func(s *testinfra.OpenStack) { s.RejectCreate = false })
-		f.create(f.admin)
-		f.create(f.admin)
-		f.request("POST", "/api/desktops", f.admin, f.body(), uuid.NewString(), 409)
+		f.create(user)
+		f.create(user)
+		f.request("POST", "/api/desktops", user, f.body(), uuid.NewString(), 409)
 		if len(f.list("/api/admin/events?action=DESKTOP_CREATE_FAILED", f.admin)) != 1 {
 			t.Fatal("missing failure event")
 		}
