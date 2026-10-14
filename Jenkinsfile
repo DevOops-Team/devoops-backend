@@ -17,7 +17,7 @@ pipeline {
     environment {
         MONGO_KUBECONFIG_CREDENTIALS = 'k8s-staging-mongo'
         IMAGE_NAME = 'ghcr.io/devoops-team/devoops-backend'
-        INFRA_REPO = 'https://collabops.ai/devoops/devoops-infra.git'
+        INFRA_REPO = 'git@collabops.ai:devoops/devoops-infra.git'
         INFRA_CREDENTIALS = 'collabops-infra-write'
         GHCR_CREDENTIALS = 'ghcr-push'
     }
@@ -101,11 +101,11 @@ pipeline {
                     git branch: params.INFRA_BRANCH,
                         credentialsId: env.INFRA_CREDENTIALS,
                         url: env.INFRA_REPO
-                    withCredentials([gitUsernamePassword(credentialsId: env.INFRA_CREDENTIALS,
-                        gitToolName: 'Default')]) {
+                    sshagent(credentials: [env.INFRA_CREDENTIALS]) {
                         sh '''
                             set +x
                             set -eu
+                            export GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=yes'
                             cd "$MANIFEST_DIR"
                             test -f kustomization.yaml
                             kustomize edit set image "$IMAGE_NAME=$IMAGE_NAME:$IMAGE_TAG"
