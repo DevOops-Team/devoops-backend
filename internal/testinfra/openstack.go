@@ -26,6 +26,7 @@ type OpenStack struct {
 	VMs                                                      map[string]map[string]any
 	Creates, Deletes, Authentications                        int
 	RAM, Disk, MinRAM, MinDisk                               int
+	WindowsRAM                                               int
 	VirtualSize                                              int64
 	ImageStatus, VMStatus                                    string
 	ReadyRDP, FailDelete, LoseCreate, RejectCreate, FailList bool
@@ -34,7 +35,7 @@ type OpenStack struct {
 }
 
 func New() *OpenStack {
-	s := &OpenStack{VMs: map[string]map[string]any{}, RAM: 1024, Disk: 10, VirtualSize: 10 << 30, ImageStatus: "active", VMStatus: "ACTIVE"}
+	s := &OpenStack{VMs: map[string]map[string]any{}, RAM: 1024, Disk: 10, WindowsRAM: 4096, VirtualSize: 10 << 30, ImageStatus: "active", VMStatus: "ACTIVE"}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	return s
 }
@@ -65,13 +66,17 @@ func (s *OpenStack) serve(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/compute/" || r.URL.Path == "/image/":
 		write(200, map[string]any{"versions": []any{map[string]any{"id": "v2.0", "status": "CURRENT", "links": []any{map[string]any{"rel": "self", "href": s.Server.URL + r.URL.Path}}}}})
 	case r.URL.Path == "/compute/flavors/detail":
-		write(200, map[string]any{"flavors": []any{map[string]any{"id": "flavor-micro", "name": "m1.micro", "vcpus": 1, "ram": s.RAM, "disk": s.Disk}}})
+		write(200, map[string]any{"flavors": []any{map[string]any{"id": "flavor-micro", "name": "m1.micro", "vcpus": 1, "ram": s.RAM, "disk": s.Disk}, map[string]any{"id": "flavor-windows", "name": "m1.windows", "vcpus": 2, "ram": s.WindowsRAM, "disk": s.Disk}}})
 	case strings.HasPrefix(r.URL.Path, "/image/v2/images/"):
 		if strings.HasSuffix(r.URL.Path, "missing") {
 			write(404, map[string]any{})
 			return
 		}
-		write(200, map[string]any{"id": "image-ubuntu", "name": "Ubuntu", "status": s.ImageStatus, "min_ram": s.MinRAM, "min_disk": s.MinDisk, "virtual_size": s.VirtualSize})
+		image := map[string]any{"id": "image-ubuntu", "name": "Ubuntu", "status": s.ImageStatus, "min_ram": s.MinRAM, "min_disk": s.MinDisk, "virtual_size": s.VirtualSize, "os_distro": "ubuntu"}
+		if strings.HasSuffix(r.URL.Path, "windows") {
+			image["id"], image["name"], image["os_distro"] = "image-windows", "Windows", "windows"
+		}
+		write(200, image)
 	case r.URL.Path == "/compute/servers" && r.Method == "POST":
 		if s.CreateStarted != nil {
 			close(s.CreateStarted)

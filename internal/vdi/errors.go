@@ -29,6 +29,6 @@ func Invalid(field, message string) *APIError {
 
 var ErrCreateRejected = errors.New("Nova rejected VM creation")
 var ErrVMNotFound = errors.New("VM not found")
-var ErrSpecUnavailable = Err(409, "SPEC_UNAVAILABLE", "m1.micro 사양을 정수 GB로 제공할 수 없습니다.")
+var ErrSpecUnavailable = Err(409, "SPEC_UNAVAILABLE", "Flavor 사양을 정수 GB로 제공할 수 없습니다.")
 var ErrOSUnavailable = Err(409, "OS_UNAVAILABLE", "이미지를 사용할 수 없습니다.")
 var ErrCloudUnavailable = Err(503, "OPENSTACK_UNAVAILABLE", "OpenStack에 연결할 수 없습니다.")

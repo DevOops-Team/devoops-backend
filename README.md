@@ -42,7 +42,7 @@ curl -i http://localhost:8080/api/auth/login \
 | `READY_TIMEOUT` | 생성·RDP 준비 제한, 기본 `15m` |
 | `GUAC_URL_TTL` | 새 Guacamole URL 사용기한, 기본 `2m` |
 
-등록 가능한 OS 타입은 `UBUNTU`, `WINDOWS`, `ROCKY`, `DEBIAN`입니다. 등록 배열이 비어 있으면 이미지 목록도 비어 있습니다. DB에 OS 등록을 저장하고, 목록 및 생성 시 실제 Glance 이미지와 `m1.micro`를 검사합니다. OS 내부 `imageId`는 API JSON에서 제외합니다.
+등록 가능한 OS 타입은 `UBUNTU`, `WINDOWS`, `ROCKY`, `DEBIAN`입니다. 등록 배열이 비어 있으면 이미지 목록도 비어 있습니다. DB에 OS 등록을 저장하고, 목록 및 생성 시 실제 Glance 이미지와 Flavor를 검사합니다. Flavor는 이미지 `os_distro`가 `windows`이면 `m1.windows`, 그 밖에는 `m1.micro`입니다. OS 내부 `imageId`는 API JSON에서 제외합니다.
 
 Flavor RAM(MiB)은 1024의 배수여야 합니다. 루트 디스크가 0이면 Glance `virtual_size`(byte)가 양의 정수 GiB로 정확히 표현되어야 합니다. `min_disk`를 실제 크기로 대신 사용하지 않습니다. RAM/디스크를 반올림하지 않고 호환되지 않는 조합은 가용 목록에서 제외합니다. 생성 입력 사양이 실제 허용 사양과 다르면 400 검증 오류, 표현 불가능한 Flavor는 409 `SPEC_UNAVAILABLE`, 비가용 이미지는 409 `OS_UNAVAILABLE`입니다. 현재 계약에는 사양 안내 API가 없어 운영자가 실제 허용 CPU/RAM/디스크를 프론트에 전달해야 합니다.
 
@@ -180,6 +180,6 @@ kubectl apply -f deploy/deployment.yaml
 
 Deployment 기본 replica는 1입니다. `Recreate` 전략과 종료 유예로 교체 시 진행 중 작업을 정리하고, 중단된 작업은 lease 만료 후 복구합니다. 컨테이너는 non-root, 읽기 전용 파일시스템으로 실행됩니다. TLS 종료·Ingress는 운영 환경에서 구성해야 합니다.
 
-외부 준비 조건은 MongoDB replica set, 접근 가능한 Keystone/Nova/Glance, `m1.micro`, 등록한 Glance 이미지, VM 네트워크·RDP 보안 그룹, RDP가 준비된 이미지와 OS별 계정, Guacamole JSON 인증 확장 및 동일 공유키입니다. 서비스 계정은 프로젝트 VM 목록과 지정 이미지·Flavor를 조회할 수 있어야 합니다. 백엔드와 Guacamole에서 VM IP로 RDP 접근이 가능해야 합니다.
+외부 준비 조건은 MongoDB replica set, 접근 가능한 Keystone/Nova/Glance, `m1.micro`·`m1.windows`, 등록한 Glance 이미지, VM 네트워크·RDP 보안 그룹, RDP가 준비된 이미지와 OS별 계정, Guacamole JSON 인증 확장 및 동일 공유키입니다. 서비스 계정은 프로젝트 VM 목록과 지정 이미지·Flavor를 조회할 수 있어야 합니다. 백엔드와 Guacamole에서 VM IP로 RDP 접근이 가능해야 합니다.
 
 실제 OpenStack VM 생성·Guacamole 브라우저 접속·삭제 E2E 및 운영 배포는 별도 검증 단계이며 이 저장소의 HTTP 대체 테스트 통과와 구분합니다. 로그아웃은 VM 또는 이미 열린 Guacamole 연결을 종료하지 않습니다. Cinder, 공개 회원가입, VM 시작/중지, 프론트, 메트릭 API는 구현 범위에 포함하지 않습니다.
