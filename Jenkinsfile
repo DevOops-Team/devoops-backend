@@ -235,7 +235,7 @@ def notifyDiscord(String repo) {
             ]) {
                 sh(label: 'Discord 알림', script: '''
                     python3 - <<'PY' > discord-payload.json
-import json, os
+import json, os, re
 e = os.environ
 r = e["N_RESULT"]
 icon = {"SUCCESS": "✅", "FAILURE": "❌", "UNSTABLE": "⚠️", "ABORTED": "⏹️"}.get(r, "ℹ️")
@@ -246,7 +246,42 @@ if e.get("N_DESC"):
     fields.append({"name": "대상", "value": e["N_DESC"][:200], "inline": False})
 if e.get("N_COMMIT"):
     fields.append({"name": "커밋", "value": e["N_COMMIT"][:200], "inline": False})
-print(json.dumps({"username": "Jenkins", "embeds": [{"title": f"{icon} {e['N_REPO']} #{e['N_BUILD']} {r}", "color": color, "fields": fields}]}))
+# 빌드 로그(Jenkins 가 쓰는 파일 — 자격 증명 값은 이미 가려져 있음)에서 결과 줄 · 실패 단계 · 마지막 로그를 뽑는다
+ESC = chr(27); NL = chr(10)
+def clean(x):
+    x = re.sub(re.escape(ESC + "[8mha:") + ".*?" + re.escape(ESC + "[0m"), "", x)
+    x = re.sub(re.escape(ESC + "[") + "[0-9;]*[A-Za-z]", "", x)
+    return x.replace("`" * 3, chr(39) * 3).rstrip()
+lines = []
+try:
+    top, _, rest = e.get("JOB_NAME", "").partition("/")
+    path = e["JENKINS_HOME"] + "/jobs/" + top + ("/branches/" + rest.replace("/", "%2F") if rest else "") + "/builds/" + e["N_BUILD"] + "/log"
+    with open(path, encoding="utf-8", errors="replace") as f:
+        lines = [clean(x) for x in f.read().splitlines()]
+    lines = [x for x in lines if x.strip() and "Discord" not in x and "discord-payload" not in x]
+except Exception:
+    lines = []
+desc = ""
+POST = "Declarative: Post Actions"
+cut = max([i for i, x in enumerate(lines) if POST in x] or [len(lines)])
+body = lines[:cut]   # 알림 단계(post) 자신의 로그는 뺀다
+if lines and r == "SUCCESS":
+    done = [x for x in body if "반영:" in x] or [x for x in body if "갱신 완료" in x]
+    if done:
+        fields.append({"name": "결과", "value": done[-1][-300:], "inline": False})
+elif lines and r in ("FAILURE", "UNSTABLE"):
+    stages = [m.group(1) for m in (re.search(re.escape("[Pipeline] { (") + "(.*)[)]", x) for x in body) if m]
+    skipped = [m.group(1) for m in (re.search("Stage " + chr(34) + "(.*)" + chr(34) + " skipped", x) for x in lines) if m]
+    stages = [x for x in stages if not x.startswith("Declarative:") and x not in skipped]   # 건너뛴 단계는 실패 단계가 아니다
+    if stages:
+        fields.append({"name": "실패 단계", "value": stages[-1][:100], "inline": True})
+    shown = [x[:200] for x in body if not x.startswith("[Pipeline]")][-25:]
+    errs = [x[:200] for x in lines if x.startswith("ERROR:") or x.startswith("Finished:")][-2:]
+    desc = "`" * 3 + NL + NL.join(shown + errs)[-3300:] + NL + "`" * 3
+embed = {"title": f"{icon} {e['N_REPO']} #{e['N_BUILD']} {r}", "color": color, "fields": fields}
+if desc:
+    embed["description"] = desc
+print(json.dumps({"username": "Jenkins", "embeds": [embed]}))
 PY
                     code=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @discord-payload.json "$DISCORD_WEBHOOK" || true)
                     rm -f discord-payload.json
