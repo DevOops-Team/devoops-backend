@@ -109,7 +109,8 @@ Docker 이미지 빌드 및 GHCR push를 순서대로 실행합니다. 이미지
 `ghcr.io/devoops-team/devoops-backend:<빌드번호>-<커밋>`입니다.
 업로드 성공 후 collabops `devoops/devoops-infra`의 `kustomization.yaml`에서
 백엔드 이미지의 `newTag`를 갱신하고 커밋·push합니다.
-`INFRA_BRANCH` 기본값은 `develop`, `MANIFEST_DIR` 기본값은 `k8s/portal/overlays/prod`입니다.
+인프라 대상 브랜치는 `main`으로 고정하며 새 브랜치는 생성하지 않습니다.
+갱신 경로는 `k8s/portal/overlays/staging/kustomization.yaml`로 고정합니다.
 인프라 저장소 루트에는 `Infra/` 접두사가 없습니다. 변경 예시는 다음과 같습니다.
 
 ```yaml
@@ -118,8 +119,9 @@ images:
     newTag: 42-0123456789ab
 ```
 
-Deployment 원본과 프론트 이미지 설정은 유지합니다. 인프라 `main` 병합 및
-클러스터 직접 배포는 포함하지 않습니다. Argo CD가 `main`을 추적한다면 별도 병합이 필요합니다.
+Deployment 원본과 프론트 이미지 설정은 유지합니다. 인프라 `main`에 이미지 태그 변경을
+직접 push하며, Argo CD가 미러의 `main`을 동기화하면 staging에 반영됩니다.
+클러스터 직접 배포는 포함하지 않습니다.
 
 Jenkins Pipeline 작업의 **Configure → Pipeline**에서 다음과 같이 설정합니다.
 
@@ -135,9 +137,13 @@ Jenkins Pipeline 작업의 **Configure → Pipeline**에서 다음과 같이 설
 실행 가능한 Linux 에이전트에 Git, Go 1.26 이상, Make, Bash, GCC, Kustomize,
 Docker Engine, kubectl, mongosh를 설치합니다. Jenkins 실행 계정에
 Docker 사용 권한을 부여하고 collabops SSH 호스트 키를 등록합니다.
-Pipeline, Git, Credentials Binding 플러그인이 필요합니다. Credential은
-`ghcr-push`(GitHub 사용자명 / GHCR push 토큰), `collabops-infra-write`(collabops 사용자명 / infra 쓰기 토큰)를
-Username with password 타입으로 등록합니다. 인프라 대상 브랜치가 미리 존재하고 직접 push가 허용되어야 합니다.
+Pipeline, Git, Credentials Binding, SSH Agent 플러그인이 필요합니다.
+`ghcr-push`는 Username with password 타입으로 GitHub 사용자명 / GHCR push 토큰을 등록합니다.
+`collabops-infra-write`는 SSH Username with private key 타입으로 Username `git`과 개인키를 등록합니다.
+짝인 공개키를 collabops 계정의 SSH Keys에 등록하고 그 계정에 infra 읽기·쓰기 권한을 부여합니다.
+에이전트에 OpenSSH 클라이언트(`ssh`, `ssh-agent`)와 검증된 collabops 호스트 키가 포함된
+`~/.ssh/known_hosts`가 필요합니다. 인프라 clone과 push는 모두 SSH를 사용합니다.
+인프라 대상 브랜치가 미리 존재하고 직접 push가 허용되어야 합니다.
 원격 변경과 충돌하면 강제 push 없이 실패합니다.
 Jenkins 통합 테스트는 `scripts/test-k8s-integration.sh`로 K8s `vdi-staging`의
 `svc/mongodb:27017`에 port-forward합니다. `k8s-staging-mongo` Credential을 Secret file 타입으로
