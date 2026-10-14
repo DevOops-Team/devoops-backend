@@ -270,6 +270,10 @@ func TestDesktopLifecycleAndGuacamole(t *testing.T) {
 	if v["connectionState"] != "READY" || v["canConnect"] != true {
 		t.Fatal(v)
 	}
+	f.tick(2)
+	if ready := f.list(fmt.Sprintf("/api/admin/events?action=DESKTOP_READY&desktopId=%d", n), f.admin); len(ready) != 1 {
+		t.Fatal("ready event", ready)
+	}
 	con := f.request("POST", path(n)+"/connect", user, nil, "", 200)
 	keys(t, con, "url", "expiresAt")
 	u, _ := url.Parse(con["url"].(string))

@@ -277,7 +277,7 @@ func (a *App) summary(w http.ResponseWriter, r *http.Request, _ User) error {
 	return nil
 }
 
-var actions = map[string]bool{"LOGIN": true, "LOGOUT": true, "DESKTOP_CREATE": true, "DESKTOP_DELETE": true, "DESKTOP_START": true, "DESKTOP_STOP": true, "DESKTOP_CREATE_FAILED": true, "DESKTOP_DELETE_FAILED": true, "DESKTOP_ASSIGN": true, "DESKTOP_RELEASE": true, "SYSTEM_ERROR": true}
+var actions = map[string]bool{"LOGIN": true, "LOGOUT": true, "DESKTOP_CREATE": true, "DESKTOP_DELETE": true, "DESKTOP_START": true, "DESKTOP_STOP": true, "DESKTOP_CREATE_FAILED": true, "DESKTOP_READY": true, "DESKTOP_DELETE_FAILED": true, "DESKTOP_ASSIGN": true, "DESKTOP_RELEASE": true, "SYSTEM_ERROR": true}
 var targets = map[string]bool{"USER": true, "DESKTOP": true, "SYSTEM": true, "OPENSTACK": true}
 
 func (a *App) events(w http.ResponseWriter, r *http.Request, _ User) error {
