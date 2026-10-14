@@ -1,5 +1,5 @@
 pipeline {
-    agent { label 'backend-ci' }
+    agent any
 
     options {
         skipDefaultCheckout(true)
