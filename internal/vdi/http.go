@@ -523,7 +523,8 @@ func (a *App) create(w http.ResponseWriter, r *http.Request, u User) error {
 		if ok, e := replay(c); e != nil || ok {
 			return e
 		}
-		if _, e = a.Store.User(c, target); e != nil {
+		owner, e := a.Store.User(c, target)
+		if e != nil {
 			return e
 		}
 		// Any cleanup-pending failed VM must be resolved before accepting a fresh retry.
@@ -534,7 +535,11 @@ func (a *App) create(w http.ResponseWriter, r *http.Request, u User) error {
 		if pending > 0 {
 			return Err(409, "OPERATION_IN_PROGRESS", "실패 자원 정리가 진행 중입니다.")
 		}
-		res, e := a.Store.C("users").UpdateOne(c, bson.M{"id": target, "deleted": false, "reserved": bson.M{"$lt": 2}}, bson.M{"$inc": bson.M{"reserved": 1, "version": 1}})
+		quota := bson.M{"id": target, "deleted": false, "reserved": bson.M{"$lt": 2}}
+		if owner.Role == "ADMIN" {
+			delete(quota, "reserved")
+		}
+		res, e := a.Store.C("users").UpdateOne(c, quota, bson.M{"$inc": bson.M{"reserved": 1, "version": 1}})
 		if e != nil {
 			return e
 		}

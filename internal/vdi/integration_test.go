@@ -381,6 +381,9 @@ func TestConcurrentQuotaAndIdempotency(t *testing.T) {
 	f.request("POST", "/api/admin/desktops", f.admin, assign, uuid.NewString(), 202)
 	f.request("POST", "/api/admin/desktops", f.admin, assign, uuid.NewString(), 409)
 	f.request("POST", "/api/desktops", user, f.body(), key, 202) // replay ignores quota
+	for range 3 {
+		f.request("POST", "/api/desktops", f.admin, f.body(), uuid.NewString(), 202) // ADMIN has no quota
+	}
 }
 func TestAvailabilityValidation(t *testing.T) {
 	f := setup(t)
@@ -639,17 +642,18 @@ func TestExpiredIdempotencyAndCommonErrors(t *testing.T) {
 func TestKnownCreateRejectionAndDuplicateCleanup(t *testing.T) {
 	t.Run("definitive rejection releases quota", func(t *testing.T) {
 		f := setup(t)
+		_, user := f.user("user@example.com", "USER")
 		f.cloud.Set(func(s *testinfra.OpenStack) { s.RejectCreate = true })
-		n := f.create(f.admin)
+		n := f.create(user)
 		f.tick(2)
-		v := f.request("GET", path(n), f.admin, nil, "", 200)
+		v := f.request("GET", path(n), user, nil, "", 200)
 		if v["status"] != "ERROR" || v["failure"].(map[string]any)["code"] != "OPENSTACK_CREATE_FAILED" {
 			t.Fatal(v)
 		}
 		f.cloud.Set(func(s *testinfra.OpenStack) { s.RejectCreate = false })
-		f.create(f.admin)
-		f.create(f.admin)
-		f.request("POST", "/api/desktops", f.admin, f.body(), uuid.NewString(), 409)
+		f.create(user)
+		f.create(user)
+		f.request("POST", "/api/desktops", user, f.body(), uuid.NewString(), 409)
 		if len(f.list("/api/admin/events?action=DESKTOP_CREATE_FAILED", f.admin)) != 1 {
 			t.Fatal("missing failure event")
 		}
