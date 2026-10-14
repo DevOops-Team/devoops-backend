@@ -24,13 +24,21 @@ pipeline {
             steps {
                 script {
                     def scmVars = checkout scm
-                    def branch = (scmVars.GIT_BRANCH ?: '').replaceFirst(/^origin\//, '')
+                    if (env.CHANGE_ID) {
+                        error('PR 빌드는 배포할 수 없습니다. develop 또는 main 브랜치 작업을 실행하세요.')
+                    }
+                    // Multibranch는 BRANCH_NAME, 일반 Pipeline은 checkout 결과를 사용한다.
+                    def branch = env.BRANCH_NAME ?: (scmVars.GIT_BRANCH ?: '')
+                    branch = branch.replaceFirst(/^refs\/remotes\/origin\//, '')
+                        .replaceFirst(/^origin\//, '')
+                        .replaceFirst(/^refs\/heads\//, '')
+                    env.SOURCE_BRANCH = branch
                     if (branch == 'develop') {
                         env.DEPLOY_ENV = 'staging'
                     } else if (branch == 'main') {
                         env.DEPLOY_ENV = 'prod'
                     } else {
-                        error("develop · main만 배포합니다 (받은 브랜치: ${branch})")
+                        error("develop → staging, main → prod만 허용합니다 (받은 브랜치: ${branch})")
                     }
                     def commit = sh(script: 'git rev-parse --short=12 HEAD', returnStdout: true).trim()
                     // 내용(tree) 해시: develop→main 머지 커밋은 SHA가 달라도 내용이 같으면 tree가 같다
@@ -159,6 +167,11 @@ pipeline {
                     deleteDir()
                     sh '''
                         set -eu
+                        # prod는 main, staging은 develop에서만 변경할 수 있다.
+                        case "$SOURCE_BRANCH:$DEPLOY_ENV" in
+                            develop:staging|main:prod) ;;
+                            *) echo '브랜치와 배포 환경이 일치하지 않습니다.'; exit 1 ;;
+                        esac
                         DIGEST="$(cat "$WORKSPACE/.deploy-digest")"
                         case "$DIGEST" in sha256:*) ;; *) echo "digest 없음"; exit 1 ;; esac
                         export GIT_SSH_COMMAND="ssh -i $INFRA_SSH_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
@@ -192,6 +205,12 @@ pipeline {
                     '''
                 }
             }
+        }
+    }
+
+    post {
+        success {
+            echo "${env.SOURCE_BRANCH} → 인프라 overlays/${env.DEPLOY_ENV} 갱신 완료. Argo CD 동기화·Healthy 상태는 별도로 확인하세요."
         }
     }
 }

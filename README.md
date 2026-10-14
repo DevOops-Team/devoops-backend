@@ -125,7 +125,12 @@ staging 태그 갱신은 자동입니다. staging 동기화·서비스 검증 �
 직접 반영합니다. GitHub 미러에는 쓰지 않습니다. Kustomize와 `co` 인증은 필요하지 않습니다.
 클러스터 직접 배포도 하지 않습니다.
 
-Jenkins Pipeline 작업의 Configure → Pipeline에서 다음과 같이 설정합니다.
+권장 구성은 프론트와 같은 **Multibranch Pipeline**입니다. Branch Source에 백엔드 저장소와
+읽기 Credential을 연결하고 브랜치 이름 필터를 `develop main`으로 설정합니다.
+Build Configuration의 Script Path는 `Jenkinsfile`입니다. develop·main이 각각 별도 작업으로 실행됩니다.
+PR 작업은 배포하지 않으며 다른 브랜치도 중단합니다.
+
+일반 Pipeline 작업을 유지한다면 다음 설정을 사용합니다.
 
 | 항목 | 값 |
 | --- | --- |
@@ -137,7 +142,8 @@ Jenkins Pipeline 작업의 Configure → Pipeline에서 다음과 같이 설정�
 | Script Path | `Jenkinsfile` |
 | Build Triggers → Poll SCM | `H/2 * * * *` |
 
-별도 Multibranch Pipeline을 사용한다면 develop·main을 각각 발견하도록 설정합니다.
+Multibranch 작업은 브랜치별 webhook 또는 정기 scan으로 갱신하며,
+일반 Pipeline 작업은 위 Poll SCM을 사용합니다.
 기존 빌드 Replay가 아닌 최신 Jenkinsfile의 새 빌드를 실행합니다.
 
 실행 노드에는 Git, Bash, awk, OpenSSH, Docker가 필요합니다. develop 빌드에는 추가로
