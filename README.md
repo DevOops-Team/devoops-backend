@@ -105,8 +105,21 @@ TEST_MONGO_URI='mongodb://127.0.0.1:27018/?replicaSet=rs0&directConnection=true'
 ### Jenkins
 
 저장소 루트의 `Jenkinsfile`은 정적 검사, 단위 테스트, MongoDB replica set 통합 테스트,
-Docker 이미지 빌드를 순서대로 실행합니다. 이미지 태그는 `vdi-api:<빌드번호>-<커밋>`입니다.
-레지스트리 push 및 Kubernetes 배포는 포함하지 않습니다.
+Docker 이미지 빌드 및 GHCR push를 순서대로 실행합니다. 이미지 태그는
+`ghcr.io/devoops-team/devoops-backend:<빌드번호>-<커밋>`입니다.
+업로드 성공 후 collabops `devoops/devoops-infra`의 `kustomization.yaml`에서
+백엔드 이미지의 `newTag`를 갱신하고 커밋·push합니다.
+`INFRA_BRANCH` 기본값은 `develop`, `MANIFEST_DIR` 기본값은 `k8s/portal/overlays/prod`입니다.
+인프라 저장소 루트에는 `Infra/` 접두사가 없습니다. 변경 예시는 다음과 같습니다.
+
+```yaml
+images:
+  - name: ghcr.io/devoops-team/devoops-backend
+    newTag: 42-0123456789ab
+```
+
+Deployment 원본과 프론트 이미지 설정은 유지합니다. 인프라 `main` 병합 및
+클러스터 직접 배포는 포함하지 않습니다. Argo CD가 `main`을 추적한다면 별도 병합이 필요합니다.
 
 Jenkins Pipeline 작업의 **Configure → Pipeline**에서 다음과 같이 설정합니다.
 
@@ -119,10 +132,14 @@ Jenkins Pipeline 작업의 **Configure → Pipeline**에서 다음과 같이 설
 | Branch Specifier | `*/develop` |
 | Script Path | `Jenkinsfile` |
 
-`backend-ci` 라벨을 가진 전용 Linux 에이전트에 Git, Go 1.26 이상, Make, Bash, GCC,
+실행 가능한 Linux 에이전트에 Git, Go 1.26 이상, Make, Bash, GCC, Kustomize,
 Docker Engine, Docker Compose v2(`--wait` 지원)를 설치합니다. Jenkins 실행 계정에
 Docker 사용 권한을 부여하고 collabops SSH 호스트 키를 등록합니다.
-Pipeline 및 Git 플러그인이 필요합니다. 통합 테스트가 호스트 포트 `27018`을 사용하므로
+Pipeline, Git, Credentials Binding 플러그인이 필요합니다. Credential은
+`ghcr-push`(GitHub 사용자명 / GHCR push 토큰), `collabops-infra-write`(collabops 사용자명 / infra 쓰기 토큰)를
+Username with password 타입으로 등록합니다. 인프라 대상 브랜치가 미리 존재하고 직접 push가 허용되어야 합니다.
+원격 변경과 충돌하면 강제 push 없이 실패합니다.
+통합 테스트가 호스트 포트 `27018`을 사용하므로
 해당 포트를 다른 작업에서 사용하지 않아야 합니다. 테스트 MongoDB는 통합 테스트 종료 시
 정리됩니다. Dockerfile의 기본 Go 버전은 1.26이며 `--build-arg GO_VERSION=...`으로 변경할 수 있습니다.
 
