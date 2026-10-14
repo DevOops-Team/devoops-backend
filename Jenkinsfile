@@ -15,8 +15,7 @@ pipeline {
     }
 
     environment {
-        // This job needs a dedicated Linux agent: the test DB binds port 27018.
-        COMPOSE_PROJECT_NAME = 'devoops-backend-ci'
+        MONGO_KUBECONFIG_CREDENTIALS = 'k8s-staging-mongo'
         IMAGE_NAME = 'ghcr.io/devoops-team/devoops-backend'
         INFRA_REPO = 'https://collabops.ai/devoops/devoops-infra.git'
         INFRA_CREDENTIALS = 'collabops-infra-write'
@@ -41,7 +40,8 @@ pipeline {
                     go version
                     gcc --version
                     docker version
-                    docker compose version
+                    kubectl version --client
+                    mongosh --version
                     kustomize version
                     git check-ref-format "refs/heads/$INFRA_BRANCH"
                 '''
@@ -62,11 +62,9 @@ pipeline {
 
         stage('Integration test') {
             steps {
-                sh 'make test-integration'
-            }
-            post {
-                always {
-                    sh 'docker compose -f compose.test.yaml down -v --remove-orphans'
+                withCredentials([file(credentialsId: env.MONGO_KUBECONFIG_CREDENTIALS,
+                    variable: 'KUBECONFIG')]) {
+                    sh 'bash scripts/test-k8s-integration.sh'
                 }
             }
         }

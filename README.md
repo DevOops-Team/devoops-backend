@@ -133,15 +133,24 @@ Jenkins Pipeline 작업의 **Configure → Pipeline**에서 다음과 같이 설
 | Script Path | `Jenkinsfile` |
 
 실행 가능한 Linux 에이전트에 Git, Go 1.26 이상, Make, Bash, GCC, Kustomize,
-Docker Engine, Docker Compose v2(`--wait` 지원)를 설치합니다. Jenkins 실행 계정에
+Docker Engine, kubectl, mongosh를 설치합니다. Jenkins 실행 계정에
 Docker 사용 권한을 부여하고 collabops SSH 호스트 키를 등록합니다.
 Pipeline, Git, Credentials Binding 플러그인이 필요합니다. Credential은
 `ghcr-push`(GitHub 사용자명 / GHCR push 토큰), `collabops-infra-write`(collabops 사용자명 / infra 쓰기 토큰)를
 Username with password 타입으로 등록합니다. 인프라 대상 브랜치가 미리 존재하고 직접 push가 허용되어야 합니다.
 원격 변경과 충돌하면 강제 push 없이 실패합니다.
-통합 테스트가 호스트 포트 `27018`을 사용하므로
-해당 포트를 다른 작업에서 사용하지 않아야 합니다. 테스트 MongoDB는 통합 테스트 종료 시
-정리됩니다. Dockerfile의 기본 Go 버전은 1.26이며 `--build-arg GO_VERSION=...`으로 변경할 수 있습니다.
+Jenkins 통합 테스트는 `scripts/test-k8s-integration.sh`로 K8s `vdi-staging`의
+`svc/mongodb:27017`에 port-forward합니다. `k8s-staging-mongo` Credential을 Secret file 타입으로
+등록하고 staging 전용 kubeconfig를 업로드합니다. 실행 에이전트에서 staging API에 접근할 수 있어야 하며,
+해당 계정에는 `vdi-staging`의 Services get, Pods get/list, Pods/portforward create 권한이 필요합니다.
+운영 admin kubeconfig를 사용하지 않습니다. 기존 문서 #28의 Jenkins 네트워크 분리 구성에서는
+staging API 접속 허용과 제한된 CI 계정 발급이 먼저 필요합니다.
+
+터널은 `127.0.0.1`의 자동 할당 포트를 사용합니다. replica set primary 준비 확인 후
+`TEST_MONGO_URI`를 주입해 테스트하며, 성공·실패 시 터널을 종료합니다. Jenkins에서는 Docker MongoDB를
+생성하지 않습니다. 테스트는 staging 서버에 고유 임시 DB를 생성하고 삭제하며 기존 앱 DB는 사용하지 않습니다.
+로컬 `make test-integration`의 Docker Compose 방식은 유지됩니다.
+Dockerfile의 기본 Go 버전은 1.26이며 `--build-arg GO_VERSION=...`으로 변경할 수 있습니다.
 
 ```bash
 docker build -t vdi-api:local .
