@@ -6,7 +6,7 @@ triggers:
   push:
     branches: ["**"]
   change_request:
-    branches: [main, dev]   # 본인 브랜치 → dev CR도 검사 (10-14 흐름: 본인 브랜치 → dev(검사) → main(사람 리뷰) → Jenkins → CD)
+    branches: [main, develop]   # 본인 브랜치 → develop CR도 검사 (10-14 흐름: 본인 브랜치 → develop(검사) → main(사람 리뷰) → Jenkins → CD)
   workflow_dispatch: {}
 env:
   REPO_URL: "https://collabops.ai/devoops/devoops-backend.git"
