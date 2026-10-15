@@ -120,6 +120,9 @@ TEST_MONGO_URI='mongodb://127.0.0.1:27018/?replicaSet=rs0&directConnection=true'
 
 ### Jenkins
 
+최종 성공·실패 Discord 알림의 Credential 설정과 메시지 항목, 확인 방법은
+[Jenkins Discord 알림](docs/jenkins-discord.md)을 참고하세요.
+
 이슈 #90의 최종 결정(2026-10-14 14:21 댓글, CR-60·62·63)에 맞춰 브랜치별로 동작합니다.
 
 | 백엔드 브랜치 | Jenkins 동작 | 인프라 변경 |
