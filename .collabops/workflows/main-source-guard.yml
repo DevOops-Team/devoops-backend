@@ -1,0 +1,36 @@
+# main 으로 가는 CR 은 develop 에서 온 것만 허용한다 (10-15, 사고: 개인 브랜치를 main 에 직접 머지)
+#   - 이 검사가 실패하면 규칙셋 #9 의 "CI 통과한 뒤에만 병합" 때문에 멤버는 머지할 수 없다 (소유자는 규칙셋이 적용되지 않지만 빨간 실패가 보인다)
+#   - 판정: CR 의 원본 커밋(collabops.sha)이 develop 에 포함돼 있어야 한다. develop → main 릴리스 CR 은 통과, 개인 브랜치 · revert 브랜치 CR 은 실패
+#   - 되돌릴 때도 develop 에서 되돌린 뒤 develop → main 으로 올린다 (main 직접 수정 금지, Jenkins 는 develop 에서 검증된 같은 내용만 prod 로 올림)
+#   - CR 검사는 대상(base) 브랜치의 워크플로 파일을 쓰므로 작성자가 자기 브랜치에서 이 검사를 끌 수 없다
+name: main-source-guard
+triggers:
+  change_request:
+    branches: [main]
+env:
+  REPO_URL: "https://collabops.ai/devoops/devoops-backend.git"
+jobs:
+  source:
+    steps:
+      - name: checkout
+        uses: "collabops/checkout@v2"
+        with:
+          repo-url: ${{ env.REPO_URL }}
+          fetch-depth: "0"
+      - name: develop-only
+        image: alpine/git:latest
+        env:
+          SHA: ${{ collabops.sha }}
+        run: |
+          set -eu
+          git config --global --add safe.directory '*'
+          git rev-parse -q --verify origin/develop >/dev/null || { echo "origin/develop 을 찾을 수 없음 — 안전을 위해 실패 처리"; exit 1; }
+          if git merge-base --is-ancestor "$SHA" origin/develop; then
+            echo "통과: ${SHA} 는 develop 에 포함돼 있음 (develop → main 릴리스)"
+          else
+            echo "차단: main 으로는 develop → main 릴리스 CR 만 올릴 수 있습니다."
+            echo "  이 CR 의 원본 커밋(${SHA})은 develop 에 없습니다 — 개인 브랜치 → main 은 안 됩니다."
+            echo "  개인 브랜치 → develop CR 로 올려 develop 빌드(staging) 검증을 거친 뒤, develop → main 으로 승격하세요."
+            echo "  (되돌리기도 develop 에서 되돌린 뒤 같은 방식으로 승격)"
+            exit 1
+          fi
