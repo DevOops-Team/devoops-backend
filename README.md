@@ -43,6 +43,8 @@ curl -i http://localhost:8080/api/auth/login \
 | `POLL_INTERVAL` | 작업 재조회 간격, 기본 `5s` |
 | `READY_TIMEOUT` | 생성·RDP 준비 제한, 기본 `15m` |
 | `GUAC_URL_TTL` | 새 Guacamole URL 사용기한, 기본 `2m` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP gRPC 트레이스 수집 주소. 비어 있으면 트레이싱 no-op |
+| `OTEL_SERVICE_NAME`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | OpenTelemetry 표준 서비스 이름·샘플링 설정 |
 
 등록 가능한 OS 타입은 `UBUNTU`, `WINDOWS`, `ROCKY`, `DEBIAN`입니다. 등록 배열이 비어 있으면 이미지 목록도 비어 있습니다. DB에 OS 등록을 저장하고, 목록 및 생성 시 실제 Glance 이미지와 Flavor를 검사합니다. Flavor는 이미지 `os_distro`가 `windows`이면 `m1.windows`, 그 밖에는 `m1.micro`입니다. OS 내부 `imageId`는 API JSON에서 제외합니다.
 
@@ -74,6 +76,14 @@ Flavor RAM(MiB)은 1024의 배수여야 합니다. 루트 디스크가 0이면 G
 관리자 데스크톱 목록만 `userId` 필터를 받습니다. 감사 이벤트는 `limit`(기본 100, 1~500), `actorId`, `desktopId`, `action`, `targetType`을 지원하며 생성 시각 내림차순입니다. 상세 enum과 DTO는 저장된 Notion 계약을 참고하세요.
 
 `GET /api/images/{osId}/spec`은 `{osId,cpuCores,memoryGb,storageGb}`를 반환하며 이미지·Flavor 내부 ID는 노출하지 않습니다. 다른 API와 동일하게 Bearer 인증이 필요합니다.
+
+## 관측
+
+- `GET /metrics`는 `/api` 밖, 같은 포트에서 인증 없이 Prometheus 지표를 엽니다. 라벨에는 라우트 틀과 고정 값만 쓰고 사용자·데스크톱 ID는 넣지 않습니다.
+- HTTP: `vdi_http_requests_total{route,code}`, `vdi_http_request_duration_seconds{route}`. `/metrics` 자신은 제외합니다.
+- 사건 지표는 트랜잭션 커밋 뒤 1회 올립니다: `vdi_logins_total{result}`, `vdi_desktop_create_requests_total{action}`, `vdi_desktop_ready_total`, `vdi_desktop_create_failures_total{code}`, `vdi_desktop_create_duration_seconds`, `vdi_desktop_connects_total{result}`.
+- 상태 지표는 scrape 때 MongoDB를 셉니다: `vdi_desktops{status,connection_state,node}`, `vdi_active_sessions`.
+- 트레이스: 들어오는 요청 span 이름은 라우트 틀이고 W3C `traceparent`를 이어받습니다. OpenStack 호출에 span을 붙이고, 생성 요청의 trace를 desktop 문서 `traceParent`로 워커 `desktop.reconcile` span까지 잇습니다. 준비 완료 뒤 `watch` 단계 확인은 추적하지 않습니다. 로그는 JSON이며 Context 로그에 `trace_id`가 붙습니다.
 
 ## 저장·복구 동작
 

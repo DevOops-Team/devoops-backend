@@ -5,11 +5,13 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"devoops/vdi/internal/guacamole"
+	"devoops/vdi/internal/telemetry"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -145,7 +147,9 @@ func (a *App) Handler() http.Handler {
 		respond(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {
-		if e := a.login(w, r); e != nil {
+		e := a.login(w, r)
+		loginsTotal.WithLabelValues(result(e)).Inc()
+		if e != nil {
 			failure(w, e)
 		}
 	})
@@ -157,7 +161,12 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/desktops", a.wrap(false, a.create))
 	mux.HandleFunc("GET /api/desktops/{desktopId}", a.wrap(false, a.desktop))
 	mux.HandleFunc("DELETE /api/desktops/{desktopId}", a.wrap(false, a.deleteDesktop))
-	mux.HandleFunc("POST /api/desktops/{desktopId}/connect", a.wrap(false, a.connect))
+	mux.HandleFunc("POST /api/desktops/{desktopId}/connect", a.wrap(false, func(w http.ResponseWriter, r *http.Request, u User) error {
+		e := a.connect(w, r, u)
+		connectsTotal.WithLabelValues(result(e)).Inc()
+		return e
+	}))
+	mux.Handle("GET /metrics", promhttp.Handler())
 	mux.HandleFunc("GET /api/admin/summary", a.wrap(true, a.summary))
 	mux.HandleFunc("GET /api/admin/users", a.wrap(true, a.users))
 	mux.HandleFunc("POST /api/admin/users", a.wrap(true, a.createUser))
@@ -168,7 +177,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/admin/desktops/{desktopId}", a.wrap(true, a.deleteDesktop))
 	mux.HandleFunc("GET /api/admin/events", a.wrap(true, a.events))
 	// ServeMux defaults produce text/html errors; retain the common JSON error contract.
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return telemetry.Handler(mux, instrument(mux, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if recover() != nil {
 				failure(w, errors.New("panic"))
@@ -190,7 +199,7 @@ func (a *App) Handler() http.Handler {
 		}
 		_ = h
 		mux.ServeHTTP(w, r)
-	})
+	})))
 }
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	if len(r.URL.Query()) > 0 {
@@ -542,7 +551,9 @@ func (a *App) create(w http.ResponseWriter, r *http.Request, u User) error {
 	if q.CPUCores != spec.CPUCores || q.MemoryGB != spec.MemoryGB || q.StorageGB != spec.StorageGB {
 		return Invalid("spec", "허용되지 않는 사양입니다.")
 	}
+	action := ""
 	e = a.Store.Tx(r.Context(), func(c context.Context) error {
+		action = ""
 		actor, e := a.authorize(c, bearer(r), admin, true)
 		if e != nil {
 			return e
@@ -579,7 +590,7 @@ func (a *App) create(w http.ResponseWriter, r *http.Request, u User) error {
 			return e
 		}
 		response = DesktopResponse{ID: n, UserID: target, Name: q.Name, OSID: q.OSID, CPUCores: q.CPUCores, MemoryGB: q.MemoryGB, StorageGB: q.StorageGB, OS: im, Status: "CREATING", ConnectionState: "PENDING", CreatedAt: now, UpdatedAt: now}
-		d := Desktop{DesktopResponse: response, ImageID: im.ImageID, FlavorID: spec.FlavorID, Phase: "queued", Reserved: true, NextRun: now}
+		d := Desktop{DesktopResponse: response, ImageID: im.ImageID, FlavorID: spec.FlavorID, Phase: "queued", Reserved: true, NextRun: now, TraceParent: telemetry.Inject(r.Context())}
 		if _, e = a.Store.C("desktops").InsertOne(c, d); e != nil {
 			return e
 		}
@@ -587,7 +598,7 @@ func (a *App) create(w http.ResponseWriter, r *http.Request, u User) error {
 		if _, e = a.Store.C("idempotency").ReplaceOne(c, bson.M{"actorId": u.ID, "key": key}, Idempotency{u.ID, key, fingerprint, response, now.Add(24 * time.Hour)}, options.Replace().SetUpsert(true)); e != nil {
 			return e
 		}
-		action := "DESKTOP_CREATE"
+		action = "DESKTOP_CREATE"
 		if admin {
 			action = "DESKTOP_ASSIGN"
 		}
@@ -595,6 +606,9 @@ func (a *App) create(w http.ResponseWriter, r *http.Request, u User) error {
 	})
 	if e != nil {
 		return e
+	}
+	if action != "" {
+		observeDesktopEvent(action, Desktop{DesktopResponse: response}, now)
 	}
 	respond(w, 202, response)
 	return nil
