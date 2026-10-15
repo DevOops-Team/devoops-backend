@@ -10,6 +10,9 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/flavors"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"io"
 	"net"
 	"net/http"
@@ -23,6 +26,9 @@ type Config struct {
 	Region, Network, ServiceID string
 	SecurityGroups             []string
 	Timeout                    time.Duration
+	// HomeVolumeGB > 0 attaches a blank Cinder volume of that size as the second disk.
+	// The desktop image mounts it on /home, so user data survives evacuation. 0 disables it.
+	HomeVolumeGB int
 }
 type OpenStack struct {
 	Compute, Image *gophercloud.ServiceClient
@@ -113,6 +119,10 @@ func (o *OpenStack) Create(ctx context.Context, d vdi.Desktop) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, o.Config.Timeout)
 	defer cancel()
 	opts := servers.CreateOpts{Name: d.Name, ImageRef: d.ImageID, FlavorRef: d.FlavorID, Networks: []servers.Network{{UUID: o.Config.Network}}, SecurityGroups: o.Config.SecurityGroups, Metadata: map[string]string{"vdi_service": o.Config.ServiceID, "vdi_desktop_id": strconv.FormatInt(d.ID, 10)}}
+	if o.Config.HomeVolumeGB > 0 {
+		// Nova creates the volume and attaches it before boot; it is deleted with the desktop.
+		opts.BlockDevice = []servers.BlockDevice{{SourceType: servers.SourceBlank, DestinationType: servers.DestinationVolume, VolumeSize: o.Config.HomeVolumeGB, BootIndex: -1, DeleteOnTermination: true}}
+	}
 	vm, e := servers.Create(ctx, o.Compute, opts, nil).Extract()
 	if e != nil {
 		for _, code := range []int{400, 401, 403, 404, 409, 413, 422, 429} {
@@ -193,35 +203,54 @@ func (o *OpenStack) Delete(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+// Ready records the raw TCP RDP probe that HTTP instrumentation cannot observe.
 func (o *OpenStack) Ready(ctx context.Context, ip string) bool {
+	ctx, span := otel.Tracer("cloud").Start(ctx, "rdp.ready", trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(attribute.String("server.address", ip), attribute.Int("server.port", 3389)))
+	defer span.End()
+	reason := o.rdpReady(ctx, ip)
+	span.SetAttributes(attribute.Bool("rdp.ready", reason == ""))
+	if reason != "" {
+		// Not ready is normal while the VM boots, so the span status stays unset.
+		span.SetAttributes(attribute.String("rdp.not_ready_reason", reason))
+	}
+	return reason == ""
+}
+
+// rdpReady returns an empty string on success, otherwise the failed probe step.
+func (o *OpenStack) rdpReady(ctx context.Context, ip string) string {
 	if net.ParseIP(ip) == nil {
-		return false
+		return "invalid_ip"
 	}
 	ctx, cancel := context.WithTimeout(ctx, o.Config.Timeout)
 	defer cancel()
 	// RDP negotiation, rather than a bare TCP accept, establishes protocol readiness.
 	c, e := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(ip, "3389"))
 	if e != nil {
-		return false
+		return "dial"
 	}
 	defer c.Close()
 	deadline, _ := ctx.Deadline()
 	_ = c.SetDeadline(deadline)
 	request := []byte{3, 0, 0, 19, 14, 0xe0, 0, 0, 0, 0, 0, 1, 0, 8, 0, 3, 0, 0, 0}
 	if _, e = c.Write(request); e != nil {
-		return false
+		return "write"
 	}
 	var header [4]byte
 	if _, e = io.ReadFull(c, header[:]); e != nil || header[0] != 3 {
-		return false
+		return "header"
 	}
 	n := int(header[2])<<8 | int(header[3])
 	if n < 11 || n > 4096 {
-		return false
+		return "length"
 	}
 	body := make([]byte, n-4)
 	if _, e = io.ReadFull(c, body); e != nil {
-		return false
+		return "body"
 	}
-	return body[1] == 0xd0 && (len(body) < 15 || body[7] != 3)
+	if body[1] == 0xd0 && (len(body) < 15 || body[7] != 3) {
+		return ""
+	}
+	return "negotiation"
 }

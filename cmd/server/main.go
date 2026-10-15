@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -96,9 +97,13 @@ func run() error {
 	if e != nil {
 		return errors.New("invalid OpenStack authentication configuration")
 	}
+	homeVolumeGB, e := strconv.Atoi(env("OS_HOME_VOLUME_GB", "5"))
+	if e != nil || homeVolumeGB < 0 {
+		return errors.New("invalid OS_HOME_VOLUME_GB")
+	}
 	startup, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	provider, e := cloud.New(startup, cloud.Config{Auth: auth, Region: os.Getenv("OS_REGION_NAME"), Network: os.Getenv("OS_NETWORK_ID"), ServiceID: env("VDI_SERVICE_ID", "devoops-vdi"), SecurityGroups: strings.Split(os.Getenv("OS_SECURITY_GROUPS"), ","), Timeout: timeout})
+	provider, e := cloud.New(startup, cloud.Config{Auth: auth, Region: os.Getenv("OS_REGION_NAME"), Network: os.Getenv("OS_NETWORK_ID"), ServiceID: env("VDI_SERVICE_ID", "devoops-vdi"), SecurityGroups: strings.Split(os.Getenv("OS_SECURITY_GROUPS"), ","), Timeout: timeout, HomeVolumeGB: homeVolumeGB})
 	if e != nil {
 		return e
 	}
