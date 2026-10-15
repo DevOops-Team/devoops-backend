@@ -51,6 +51,7 @@ type Desktop struct {
 	VMID            string    `bson:"vmId"`
 	ImageID         string    `bson:"imageId"`
 	FlavorID        string    `bson:"flavorId"`
+	TraceParent     string    `bson:"traceParent"`
 	Phase           string    `bson:"phase"`
 	Resolved        bool      `bson:"resolved"`
 	Submitted       bool      `bson:"submitted"`

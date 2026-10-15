@@ -4,11 +4,13 @@ import (
 	"context"
 	"devoops/vdi/internal/cloud"
 	"devoops/vdi/internal/guacamole"
+	"devoops/vdi/internal/telemetry"
 	"devoops/vdi/internal/vdi"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/gophercloud/gophercloud/v2/openstack"
+	"github.com/prometheus/client_golang/prometheus"
 	"log/slog"
 	"net/http"
 	"os"
@@ -34,6 +36,13 @@ func duration(key, def string) (time.Duration, error) {
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	slog.SetDefault(slog.New(telemetry.LogHandler{Handler: slog.NewJSONHandler(os.Stdout, nil)}))
+	// Tracing failures must not stop the API.
+	if shutdown, e := telemetry.Setup(ctx); e != nil {
+		slog.Error("OpenTelemetry setup failed", "reason", e.Error())
+	} else {
+		defer shutdown(context.Background())
+	}
 	timeout, e := duration("EXTERNAL_TIMEOUT", "10s")
 	if e != nil {
 		return e
@@ -111,6 +120,7 @@ func run() error {
 	if e = store.Bootstrap(startup, name, strings.ToLower(email), password, images); e != nil {
 		return errors.New("MongoDB bootstrap failed (replica set required)")
 	}
+	prometheus.MustRegister(vdi.NewStateCollector(store))
 	app := vdi.NewApp(store, provider, guac)
 	worker := vdi.Worker{Store: store, Cloud: provider, Now: time.Now, Interval: interval, ReadyTimeout: readyTimeout, LeaseDuration: 4*timeout + 30*time.Second}
 	workerDone := make(chan struct{})
