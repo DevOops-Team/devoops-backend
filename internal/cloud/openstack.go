@@ -121,7 +121,8 @@ func (o *OpenStack) Create(ctx context.Context, d vdi.Desktop) (string, error) {
 	opts := servers.CreateOpts{Name: d.Name, ImageRef: d.ImageID, FlavorRef: d.FlavorID, Networks: []servers.Network{{UUID: o.Config.Network}}, SecurityGroups: o.Config.SecurityGroups, Metadata: map[string]string{"vdi_service": o.Config.ServiceID, "vdi_desktop_id": strconv.FormatInt(d.ID, 10)}}
 	if o.Config.HomeVolumeGB > 0 {
 		// Nova creates the volume and attaches it before boot; it is deleted with the desktop.
-		opts.BlockDevice = []servers.BlockDevice{{SourceType: servers.SourceBlank, DestinationType: servers.DestinationVolume, VolumeSize: o.Config.HomeVolumeGB, BootIndex: -1, DeleteOnTermination: true}}
+		// With block_device_mapping_v2 Nova needs the image root disk listed as boot_index 0.
+		opts.BlockDevice = []servers.BlockDevice{{SourceType: servers.SourceImage, DestinationType: servers.DestinationLocal, UUID: d.ImageID, BootIndex: 0, DeleteOnTermination: true}, {SourceType: servers.SourceBlank, DestinationType: servers.DestinationVolume, VolumeSize: o.Config.HomeVolumeGB, BootIndex: -1, DeleteOnTermination: true}}
 	}
 	vm, e := servers.Create(ctx, o.Compute, opts, nil).Extract()
 	if e != nil {

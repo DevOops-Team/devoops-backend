@@ -49,10 +49,14 @@ func TestCreateHomeVolume(t *testing.T) {
 			continue
 		}
 		bdm, _ := server["block_device_mapping_v2"].([]any)
-		if len(bdm) != 1 {
+		if len(bdm) != 2 {
 			t.Fatal(server)
 		}
-		b, _ := bdm[0].(map[string]any)
+		root, _ := bdm[0].(map[string]any)
+		if root["source_type"] != "image" || root["destination_type"] != "local" || root["uuid"] != "image-ubuntu" || root["boot_index"] != float64(0) || root["delete_on_termination"] != true {
+			t.Fatal(root)
+		}
+		b, _ := bdm[1].(map[string]any)
 		if b["source_type"] != "blank" || b["destination_type"] != "volume" || b["volume_size"] != float64(gb) || b["boot_index"] != float64(-1) || b["delete_on_termination"] != true {
 			t.Fatal(b)
 		}
