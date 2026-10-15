@@ -212,5 +212,67 @@ pipeline {
         success {
             echo "${env.SOURCE_BRANCH} → 인프라 overlays/${env.DEPLOY_ENV} 갱신 완료. Argo CD 동기화·Healthy 상태는 별도로 확인하세요."
         }
+        always {
+            notifyDiscord('devoops-backend')
+        }
+    }
+}
+
+// 빌드가 끝나면 결과를 Discord로 알린다. 웹훅 URL은 Jenkins Credential(discord-ci-webhook, Secret text)에만 둔다.
+// Credential이 없거나 전송에 실패해도 빌드 결과는 바꾸지 않는다.
+def notifyDiscord(String repo) {
+    try {
+        // 머지 커밋이면 그 머지로 들어온 커밋들(HEAD^1..HEAD, 머지 제외), 아니면 HEAD 하나
+        def commit = sh(returnStdout: true, script: '''
+            out=""
+            if git rev-parse -q --verify "HEAD^2" >/dev/null 2>&1; then
+                out=$(git log --no-merges --format='%h %s (%an)' "HEAD^1..HEAD" 2>/dev/null || true)
+            fi
+            [ -n "$out" ] || out=$(git log -1 --format='%h %s (%an)' 2>/dev/null || true)
+            printf '%s\n' "$out"
+        ''').trim()
+        echo "배포 커밋:\n${commit}"
+        withCredentials([string(credentialsId: 'discord-ci-webhook', variable: 'DISCORD_WEBHOOK')]) {
+            withEnv([
+                "N_REPO=${repo}",
+                "N_BRANCH=${env.BRANCH_NAME ?: env.SOURCE_BRANCH ?: '-'}",
+                "N_RESULT=${currentBuild.currentResult}",
+                "N_BUILD=${env.BUILD_NUMBER}",
+                "N_DESC=${currentBuild.description ?: ''}",
+                "N_DURATION=${currentBuild.durationString.replace(' and counting', '')}",
+                "N_COMMIT=${commit}",
+            ]) {
+                sh(label: 'Discord 알림', script: '''
+                    python3 - <<'PY' > discord-payload.json
+import json, os
+e = os.environ
+r = e["N_RESULT"]
+icon = {"SUCCESS": "✅", "FAILURE": "❌", "UNSTABLE": "⚠️", "ABORTED": "⏹️"}.get(r, "ℹ️")
+color = {"SUCCESS": 0x2ECC71, "FAILURE": 0xE74C3C, "UNSTABLE": 0xF1C40F}.get(r, 0x95A5A6)
+fields = [{"name": "브랜치", "value": e["N_BRANCH"], "inline": True},
+          {"name": "소요 시간", "value": e["N_DURATION"] or "-", "inline": True}]
+if e.get("N_DESC"):
+    fields.append({"name": "대상", "value": e["N_DESC"][:200], "inline": False})
+lines = [l[:150] for l in e.get("N_COMMIT", "").splitlines() if l.strip()]
+if lines:
+    shown, value = 0, ""
+    for l in lines[:10]:
+        if len(value) + len(l) + 1 > 950:
+            break
+        value += l + "\\n"
+        shown += 1
+    if len(lines) > shown:
+        value += f"…외 {len(lines) - shown}개"
+    fields.append({"name": f"커밋 ({len(lines)})", "value": value.strip(), "inline": False})
+print(json.dumps({"username": "Jenkins", "embeds": [{"title": f"{icon} {e['N_REPO']} #{e['N_BUILD']} {r}", "color": color, "fields": fields}]}))
+PY
+                    code=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @discord-payload.json "$DISCORD_WEBHOOK" || true)
+                    rm -f discord-payload.json
+                    echo "Discord 알림 HTTP ${code:-실패}"
+                ''')
+            }
+        }
+    } catch (err) {
+        echo "Discord 알림 생략: ${err}"
     }
 }
