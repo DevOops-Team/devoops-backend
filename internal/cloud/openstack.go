@@ -23,6 +23,9 @@ type Config struct {
 	Region, Network, ServiceID string
 	SecurityGroups             []string
 	Timeout                    time.Duration
+	// HomeVolumeGB > 0 attaches a blank Cinder volume of that size as the second disk.
+	// The desktop image mounts it on /home, so user data survives evacuation. 0 disables it.
+	HomeVolumeGB int
 }
 type OpenStack struct {
 	Compute, Image *gophercloud.ServiceClient
@@ -113,6 +116,10 @@ func (o *OpenStack) Create(ctx context.Context, d vdi.Desktop) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, o.Config.Timeout)
 	defer cancel()
 	opts := servers.CreateOpts{Name: d.Name, ImageRef: d.ImageID, FlavorRef: d.FlavorID, Networks: []servers.Network{{UUID: o.Config.Network}}, SecurityGroups: o.Config.SecurityGroups, Metadata: map[string]string{"vdi_service": o.Config.ServiceID, "vdi_desktop_id": strconv.FormatInt(d.ID, 10)}}
+	if o.Config.HomeVolumeGB > 0 {
+		// Nova creates the volume and attaches it before boot; it is deleted with the desktop.
+		opts.BlockDevice = []servers.BlockDevice{{SourceType: servers.SourceBlank, DestinationType: servers.DestinationVolume, VolumeSize: o.Config.HomeVolumeGB, BootIndex: -1, DeleteOnTermination: true}}
+	}
 	vm, e := servers.Create(ctx, o.Compute, opts, nil).Extract()
 	if e != nil {
 		for _, code := range []int{400, 401, 403, 404, 409, 413, 422, 429} {

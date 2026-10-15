@@ -34,6 +34,7 @@ curl -i http://localhost:8080/api/auth/login \
 | `OS_USER_DOMAIN_NAME`, `OS_PROJECT_DOMAIN_NAME` | 인증 도메인, Gophercloud의 표준 OS 환경 변수 지원 |
 | `OS_REGION_NAME` | 서비스 카탈로그 리전 |
 | `OS_NETWORK_ID`, `OS_SECURITY_GROUPS` | VM 네트워크 UUID, 쉼표로 구분한 보안 그룹 이름 |
+| `OS_HOME_VOLUME_GB` | 데스크톱마다 붙이는 빈 Cinder 데이터 볼륨 크기(GB, 기본 `5`, `0`이면 붙이지 않음). 이미지가 이 볼륨을 `/home`으로 마운트해 evacuate 뒤에도 데이터가 남는다. 데스크톱 삭제 때 함께 삭제 |
 | `VDI_SERVICE_ID` | metadata 자원 추적 범위, 기본 `devoops-vdi`; 운영 DB마다 고유하고 재시작 시 유지 |
 | `OS_IMAGES_JSON` | `name`, `type`, `version`, `imageId`를 갖는 OS 등록 배열 |
 | `RDP_CREDENTIALS_JSON` | OS 타입별 `username`, `password`, 선택 `domain` 객체 |
@@ -201,4 +202,4 @@ Deployment 기본 replica는 1입니다. `Recreate` 전략과 종료 유예로 �
 
 외부 준비 조건은 MongoDB replica set, 접근 가능한 Keystone/Nova/Glance, `m1.micro`·`m1.windows`, 등록한 Glance 이미지, VM 네트워크·RDP 보안 그룹, RDP가 준비된 이미지와 OS별 계정, Guacamole JSON 인증 확장 및 동일 공유키입니다. 서비스 계정은 프로젝트 VM 목록과 지정 이미지·Flavor를 조회할 수 있어야 합니다. 백엔드와 Guacamole에서 VM IP로 RDP 접근이 가능해야 합니다.
 
-실제 OpenStack VM 생성·Guacamole 브라우저 접속·삭제 E2E 및 운영 배포는 별도 검증 단계이며 이 저장소의 HTTP 대체 테스트 통과와 구분합니다. 로그아웃은 VM 또는 이미 열린 Guacamole 연결을 종료하지 않습니다. Cinder, 공개 회원가입, VM 시작/중지, 프론트, 메트릭 API는 구현 범위에 포함하지 않습니다.
+실제 OpenStack VM 생성·Guacamole 브라우저 접속·삭제 E2E 및 운영 배포는 별도 검증 단계이며 이 저장소의 HTTP 대체 테스트 통과와 구분합니다. 로그아웃은 VM 또는 이미 열린 Guacamole 연결을 종료하지 않습니다. Cinder 볼륨 별도 관리(데스크톱과 따로 보존·재사용), 공개 회원가입, VM 시작/중지, 프론트, 메트릭 API는 구현 범위에 포함하지 않습니다.
