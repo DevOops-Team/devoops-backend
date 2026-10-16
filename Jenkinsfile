@@ -12,6 +12,7 @@ pipeline {
     environment {
         MONGO_KUBECONFIG_CREDENTIALS = 'k8s-staging-mongo'
         IMAGE_NAME = 'ghcr.io/devoops-team/devoops-backend'
+        PROD_HEALTHCHECK_URL = 'https://devoops.site'
         // devoops-infra는 CollabOps 원본에 쓴다 (GitHub 미러에 쓰면 미러가 깨짐) — ci/update-image.sh
         INFRA_REPO = 'git@collabops.ai:devoops/devoops-infra.git'
         INFRA_SSH_KEY = '/var/jenkins_home/.ssh/id_ed25519_collabops_ci'
@@ -90,6 +91,7 @@ pipeline {
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
                 sh 'make test'
+                sh 'python3 scripts/test-main-health.py'
             }
         }
 
@@ -170,6 +172,16 @@ pipeline {
             }
         }
 
+        stage('이미지 기동 검사 [main]') {
+            when { expression { env.DEPLOY_ENV == 'prod' } }
+            steps {
+                script { env.LAST_STAGE = env.STAGE_NAME }
+                timeout(time: 10, unit: 'MINUTES') {
+                    sh 'python3 scripts/check-image-startup.py'
+                }
+            }
+        }
+
         stage('매니페스트 갱신 [develop·main]') {
             // CollabOps devoops-infra overlays/<staging|prod> → GitHub 미러 → Argo CD
             steps {
@@ -204,6 +216,16 @@ pipeline {
             }
         }
 
+        stage('운영 HTTP 확인 [main]') {
+            when { expression { env.DEPLOY_ENV == 'prod' } }
+            steps {
+                script { env.LAST_STAGE = env.STAGE_NAME }
+                timeout(time: 12, unit: 'MINUTES') {
+                    sh 'python3 scripts/check-prod-health.py'
+                }
+            }
+        }
+
         stage('태그 발행 [develop]') {
             // staging 매니페스트 갱신 후 같은 digest의 tree 태그를 발행한다. 실제 배포 확인은 사람이 한다.
             when { expression { env.DEPLOY_ENV == 'staging' } }
@@ -233,7 +255,7 @@ pipeline {
             script {
                 echo env.DEPLOY_ENV == 'staging' ?
                     'staging 매니페스트 갱신·승격용 태그 발행 완료. 실제 배포·기능은 사람이 확인한 후 main에 머지하세요.' :
-                    'prod 매니페스트 갱신 완료. 실제 prod 배포 상태는 Argo CD에서 확인하세요.'
+                    '새 이미지 기동·prod 매니페스트 갱신·운영 HTTP 확인 성공. 새 digest의 배포 완료는 Argo CD에서 별도 확인하세요.'
             }
         }
         always {
