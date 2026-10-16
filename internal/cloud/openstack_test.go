@@ -30,8 +30,9 @@ func TestCreateHomeVolume(t *testing.T) {
 			_, _ = w.Write([]byte(`{"server":{"id":"vm-1"}}`))
 		}))
 		c := &cloud.OpenStack{Compute: &gophercloud.ServiceClient{ProviderClient: &gophercloud.ProviderClient{}, Endpoint: srv.URL + "/"},
-			Config: cloud.Config{Network: "network", SecurityGroups: []string{"rdp"}, ServiceID: "test-vdi", Timeout: time.Second, HomeVolumeGB: gb}}
+			Config: cloud.Config{Network: "network", SecurityGroups: []string{"rdp"}, ServiceID: "test-vdi", Timeout: time.Second, HomeVolumeGB: gb, WindowsBootVolume: true}}
 		d := vdi.Desktop{ImageID: "image-ubuntu", FlavorID: "flavor-micro"}
+		d.OS.Type = "UBUNTU"
 		d.ID, d.Name = 1, "desktop-1"
 		id, e := c.Create(context.Background(), d)
 		srv.Close()
@@ -59,6 +60,43 @@ func TestCreateHomeVolume(t *testing.T) {
 		b, _ := bdm[1].(map[string]any)
 		if b["source_type"] != "blank" || b["destination_type"] != "volume" || b["volume_size"] != float64(gb) || b["boot_index"] != float64(-1) || b["delete_on_termination"] != true {
 			t.Fatal(b)
+		}
+	}
+}
+
+func TestCreateWindowsBootVolume(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		var body map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"server":{"id":"vm-1"}}`))
+		}))
+		c := &cloud.OpenStack{Compute: &gophercloud.ServiceClient{ProviderClient: &gophercloud.ProviderClient{}, Endpoint: srv.URL + "/"},
+			Config: cloud.Config{Network: "network", SecurityGroups: []string{"rdp"}, ServiceID: "test-vdi", Timeout: time.Second, HomeVolumeGB: 5, WindowsBootVolume: on}}
+		d := vdi.Desktop{ImageID: "image-windows", FlavorID: "flavor-windows"}
+		d.ID, d.Name, d.StorageGB, d.OS.Type = 1, "desktop-1", 32, "WINDOWS"
+		id, e := c.Create(context.Background(), d)
+		srv.Close()
+		if e != nil || id != "vm-1" {
+			t.Fatal(on, id, e)
+		}
+		server, _ := body["server"].(map[string]any)
+		bdm, _ := server["block_device_mapping_v2"].([]any)
+		if !on {
+			// disabled: same as Linux (image root disk + blank /home volume)
+			if server["imageRef"] != "image-windows" || len(bdm) != 2 {
+				t.Fatal(server)
+			}
+			continue
+		}
+		if server["imageRef"] != "" || server["flavorRef"] != "flavor-windows" || len(bdm) != 1 {
+			t.Fatal(server)
+		}
+		root, _ := bdm[0].(map[string]any)
+		if root["source_type"] != "image" || root["destination_type"] != "volume" || root["uuid"] != "image-windows" || root["volume_size"] != float64(32) || root["boot_index"] != float64(0) || root["delete_on_termination"] != true {
+			t.Fatal(root)
 		}
 	}
 }

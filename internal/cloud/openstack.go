@@ -29,6 +29,9 @@ type Config struct {
 	// HomeVolumeGB > 0 attaches a blank Cinder volume of that size as the second disk.
 	// The desktop image mounts it on /home, so user data survives evacuation. 0 disables it.
 	HomeVolumeGB int
+	// WindowsBootVolume boots WINDOWS desktops from a Cinder volume made from the image (size = StorageGB).
+	// Windows keeps user data in C:\Users, so the whole root disk survives evacuation instead of a /home volume.
+	WindowsBootVolume bool
 }
 type OpenStack struct {
 	Compute, Image *gophercloud.ServiceClient
@@ -119,7 +122,13 @@ func (o *OpenStack) Create(ctx context.Context, d vdi.Desktop) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, o.Config.Timeout)
 	defer cancel()
 	opts := servers.CreateOpts{Name: d.Name, ImageRef: d.ImageID, FlavorRef: d.FlavorID, Networks: []servers.Network{{UUID: o.Config.Network}}, SecurityGroups: o.Config.SecurityGroups, Metadata: map[string]string{"vdi_service": o.Config.ServiceID, "vdi_desktop_id": strconv.FormatInt(d.ID, 10)}}
-	if o.Config.HomeVolumeGB > 0 {
+	switch {
+	case o.Config.WindowsBootVolume && d.OS.Type == "WINDOWS":
+		// Nova creates the root volume from the image before boot; it is deleted with the desktop.
+		// Boot from volume takes the image from the mapping, so imageRef is sent empty.
+		opts.ImageRef = ""
+		opts.BlockDevice = []servers.BlockDevice{{SourceType: servers.SourceImage, DestinationType: servers.DestinationVolume, UUID: d.ImageID, VolumeSize: d.StorageGB, BootIndex: 0, DeleteOnTermination: true}}
+	case o.Config.HomeVolumeGB > 0:
 		// Nova creates the volume and attaches it before boot; it is deleted with the desktop.
 		// With block_device_mapping_v2 Nova needs the image root disk listed as boot_index 0.
 		opts.BlockDevice = []servers.BlockDevice{{SourceType: servers.SourceImage, DestinationType: servers.DestinationLocal, UUID: d.ImageID, BootIndex: 0, DeleteOnTermination: true}, {SourceType: servers.SourceBlank, DestinationType: servers.DestinationVolume, VolumeSize: o.Config.HomeVolumeGB, BootIndex: -1, DeleteOnTermination: true}}

@@ -35,6 +35,7 @@ curl -i http://localhost:8080/api/auth/login \
 | `OS_REGION_NAME` | 서비스 카탈로그 리전 |
 | `OS_NETWORK_ID`, `OS_SECURITY_GROUPS` | VM 네트워크 UUID, 쉼표로 구분한 보안 그룹 이름 |
 | `OS_HOME_VOLUME_GB` | 데스크톱마다 붙이는 빈 Cinder 데이터 볼륨 크기(GB, 기본 `5`, `0`이면 붙이지 않음). 이미지가 이 볼륨을 `/home`으로 마운트해 evacuate 뒤에도 데이터가 남는다. 데스크톱 삭제 때 함께 삭제 |
+| `OS_WINDOWS_BOOT_VOLUME` | `true`(기본)면 WINDOWS 데스크톱은 이미지로 만든 Cinder 볼륨(크기 = 데스크톱 저장 용량)으로 부팅하고 `/home` 볼륨은 붙이지 않는다. Windows는 사용자 데이터가 `C:\Users`에 있어 루트 디스크 전체를 볼륨에 둬야 evacuate 뒤에도 남는다. 데스크톱 삭제 때 함께 삭제 |
 | `VDI_SERVICE_ID` | metadata 자원 추적 범위, 기본 `devoops-vdi`; 운영 DB마다 고유하고 재시작 시 유지 |
 | `OS_IMAGES_JSON` | `name`, `type`, `version`, `imageId`를 갖는 OS 등록 배열 |
 | `RDP_CREDENTIALS_JSON` | OS 타입별 `username`, `password`, 선택 `domain` 객체 |
