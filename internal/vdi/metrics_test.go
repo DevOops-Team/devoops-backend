@@ -31,6 +31,11 @@ func TestInstrumentUsesRoutePattern(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
 	body := rec.Body.String()
+	for _, c := range []string{"OPENSTACK_CREATE_FAILED", "RDP_READY_TIMEOUT", "UNKNOWN"} {
+		if !strings.Contains(body, `vdi_desktop_create_failures_total{code="`+c+`"}`) {
+			t.Fatalf("failure code %s not pre-created", c)
+		}
+	}
 	if !strings.Contains(body, `vdi_logins_total{result="failure"}`) || strings.Contains(body, `route="GET /metrics"`) {
 		t.Fatal("metrics output unexpected")
 	}

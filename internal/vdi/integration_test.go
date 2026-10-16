@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"io"
@@ -646,13 +647,39 @@ func TestExpiredIdempotencyAndCommonErrors(t *testing.T) {
 	}
 }
 
+// createFailures reads vdi_desktop_create_failures_total{code} from the default registry.
+func createFailures(t *testing.T, code string) float64 {
+	t.Helper()
+	families, e := prometheus.DefaultGatherer.Gather()
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, family := range families {
+		if family.GetName() != "vdi_desktop_create_failures_total" {
+			continue
+		}
+		for _, m := range family.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "code" && l.GetValue() == code {
+					return m.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	t.Fatalf("vdi_desktop_create_failures_total{code=%q} not exported", code)
+	return 0
+}
 func TestKnownCreateRejectionAndDuplicateCleanup(t *testing.T) {
 	t.Run("definitive rejection releases quota", func(t *testing.T) {
 		f := setup(t)
 		_, user := f.user("user@example.com", "USER")
 		f.cloud.Set(func(s *testinfra.OpenStack) { s.RejectCreate = true })
+		before := createFailures(t, "OPENSTACK_CREATE_FAILED")
 		n := f.create(user)
 		f.tick(2)
+		if got := createFailures(t, "OPENSTACK_CREATE_FAILED") - before; got != 1 {
+			t.Fatalf("rejected create counted %v times, want 1", got)
+		}
 		v := f.request("GET", path(n), user, nil, "", 200)
 		if v["status"] != "ERROR" || v["failure"].(map[string]any)["code"] != "OPENSTACK_CREATE_FAILED" {
 			t.Fatal(v)
