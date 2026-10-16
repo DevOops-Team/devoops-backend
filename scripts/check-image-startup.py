@@ -88,7 +88,7 @@ def check_image(env=os.environ):
         settings = {
             'MONGO_URI':'mongodb://mongo:27017/?replicaSet=rs0', 'MONGO_DATABASE':'startup_check',
             'OS_AUTH_URL':'http://cloud:8000/v3', 'OS_USERNAME':'ci', 'OS_PASSWORD':'disposable',
-            'OS_PROJECT_NAME':'ci', 'OS_USER_DOMAIN_NAME':'Default', 'OS_PROJECT_DOMAIN_NAME':'Default',
+            'OS_PROJECT_NAME':'ci', 'OS_DOMAIN_NAME':'Default',
             'OS_REGION_NAME':'RegionOne', 'OS_NETWORK_ID':'isolated-ci', 'OS_SECURITY_GROUPS':'ci',
             'OS_IMAGES_JSON':'[]', 'RDP_CREDENTIALS_JSON':'{}', 'GUAC_URL':'http://cloud:8000/guacamole/',
             'GUAC_JSON_KEY':uuid.uuid4().hex, 'ADMIN_NAME':'CI', 'ADMIN_EMAIL':'ci@example.invalid',
