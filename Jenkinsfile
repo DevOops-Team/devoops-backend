@@ -5,8 +5,15 @@ pipeline {
         skipDefaultCheckout(true)
         disableConcurrentBuilds()
         timestamps()
-        timeout(time: 30, unit: 'MINUTES')
+        timeout(time: 60, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    parameters {
+        string(name: 'STAGING_VERIFY_CREDENTIALS', defaultValue: 'k8s-staging-backend-verify',
+            description: 'staging Argo CD·Deployment·Service·Pod 조회 및 backend port-forward kubeconfig')
+        string(name: 'STAGING_SMOKE_CREDENTIALS', defaultValue: 'staging-backend-smoke',
+            description: 'staging 전용 USER 테스트 계정 이메일·비밀번호 (Username with password)')
     }
 
     environment {
@@ -19,11 +26,12 @@ pipeline {
     }
 
     stages {
-        stage('Checkout') {
+        stage('소스 가져오기') {
             // develop → 테스트 · 빌드 · staging 반영 / main → staging에서 검증한 같은 이미지를 prod로 (10-14 결정 A안)
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
                 script {
+                    sh 'rm -f .deploy-digest .staging-infra-revision .staging-verified'
                     def scmVars = checkout scm
                     if (env.CHANGE_ID) {
                         error('PR 빌드는 배포할 수 없습니다. develop 또는 main 브랜치 작업을 실행하세요.')
@@ -50,12 +58,12 @@ pipeline {
             }
         }
 
-        stage('Check tools') {
+        stage('검사 도구 확인') {
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
                 sh '''
                     set -eu
-                    for tool in git bash awk ssh docker; do
+                    for tool in git bash awk ssh docker python3; do
                         command -v "$tool" >/dev/null
                     done
                     test -r "$INFRA_SSH_KEY"
@@ -76,7 +84,21 @@ pipeline {
             }
         }
 
-        stage('Vet') {
+        stage('스테이징 검증 권한 확인') {
+            when { expression { env.DEPLOY_ENV == 'staging' } }
+            steps {
+                script { env.LAST_STAGE = env.STAGE_NAME }
+                withCredentials([
+                    file(credentialsId: params.STAGING_VERIFY_CREDENTIALS, variable: 'KUBECONFIG'),
+                    usernamePassword(credentialsId: params.STAGING_SMOKE_CREDENTIALS,
+                        usernameVariable: 'SMOKE_EMAIL', passwordVariable: 'SMOKE_PASSWORD')
+                ]) {
+                    sh 'python3 scripts/verify-staging.py --preflight'
+                }
+            }
+        }
+
+        stage('정적 검사') {
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -84,7 +106,7 @@ pipeline {
             }
         }
 
-        stage('Unit test') {
+        stage('단위 테스트') {
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -92,7 +114,7 @@ pipeline {
             }
         }
 
-        stage('Integration test') {
+        stage('통합 테스트') {
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -103,7 +125,7 @@ pipeline {
             }
         }
 
-        stage('Docker build') {
+        stage('이미지 빌드') {
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -114,7 +136,7 @@ pipeline {
             }
         }
 
-        stage('Trivy') {
+        stage('이미지 보안 검사') {
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -125,7 +147,7 @@ pipeline {
             }
         }
 
-        stage('GHCR push') {
+        stage('GHCR 이미지 업로드') {
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -138,14 +160,14 @@ pipeline {
                         trap 'rm -rf "$DOCKER_CONFIG"' EXIT
                         printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
                         docker push "$IMAGE_NAME:$IMAGE_TAG"
-                        # 승격용 tree 태그는 staging 갱신 성공 후 별도 단계에서 발행한다.
+                        # verified-tree 태그는 실제 staging 배포·API 검증 성공 후 발행한다.
                         docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE_NAME:$IMAGE_TAG" | sed 's/.*@//' > "$WORKSPACE/.deploy-digest"
                     '''
                 }
             }
         }
 
-        stage('Resolve prod image') {
+        stage('운영 승격 이미지 조회') {
             // main: 새로 빌드하지 않는다 — develop에서 테스트 · 빌드 · staging 반영까지 끝난 같은 digest
             when { expression { env.DEPLOY_ENV == 'prod' } }
             steps {
@@ -158,18 +180,18 @@ pipeline {
                         export DOCKER_CONFIG="$(mktemp -d)"
                         trap 'rm -rf "$DOCKER_CONFIG"' EXIT
                         printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
-                        if ! docker pull -q "$IMAGE_NAME:tree-$TREE" >/dev/null; then
-                            echo "staging에서 검증된 이미지가 없습니다: $IMAGE_NAME:tree-$TREE"
+                        if ! docker pull -q "$IMAGE_NAME:verified-tree-$TREE" >/dev/null; then
+                            echo "staging에서 검증된 이미지가 없습니다: $IMAGE_NAME:verified-tree-$TREE"
                             echo "main 내용이 develop 빌드와 다릅니다. main에는 develop에서만 머지하고, develop 빌드가 성공한 뒤 머지하세요."
                             exit 1
                         fi
-                        docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE_NAME:tree-$TREE" | sed 's/.*@//' > "$WORKSPACE/.deploy-digest"
+                        docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE_NAME:verified-tree-$TREE" | sed 's/.*@//' > "$WORKSPACE/.deploy-digest"
                     '''
                 }
             }
         }
 
-        stage('Update infra image') {
+        stage('인프라 이미지 반영') {
             // CollabOps devoops-infra overlays/<staging|prod> → GitHub 미러 → Argo CD
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -190,13 +212,37 @@ pipeline {
                         bash infra/ci/update-image.sh "$DEPLOY_ENV" "$IMAGE_NAME" "$DIGEST" "jenkins #$BUILD_NUMBER tree-$TREE" || rc=$?
                         # 0 = 반영, 3 = 이미 같은 이미지
                         [ "$rc" = 0 ] || [ "$rc" = 3 ]
+                        if [ "$DEPLOY_ENV" = staging ]; then
+                            git -C infra fetch -q origin main
+                            REVISION="$(git -C infra rev-parse FETCH_HEAD)"
+                            ACTUAL="$(git -C infra show "$REVISION:k8s/portal/overlays/staging/kustomization.yaml" |
+                                awk -v mode=get -v img="$IMAGE_NAME" -f infra/ci/images.awk)"
+                            [ "$ACTUAL" = "$DIGEST" ] || { echo 'staging 이미지가 다른 변경으로 교체되었습니다'; exit 1; }
+                            printf '%s' "$REVISION" > "$WORKSPACE/.staging-infra-revision"
+                        fi
                     '''
                 }
             }
         }
 
-        stage('Publish promotion tag') {
-            // staging manifest push 실패 시 main에서 찾을 승격 태그를 만들지 않는다.
+        stage('스테이징 배포·백엔드 API 검증') {
+            when { expression { env.DEPLOY_ENV == 'staging' } }
+            steps {
+                script { env.LAST_STAGE = env.STAGE_NAME }
+                withCredentials([
+                    file(credentialsId: params.STAGING_VERIFY_CREDENTIALS, variable: 'KUBECONFIG'),
+                    usernamePassword(credentialsId: params.STAGING_SMOKE_CREDENTIALS,
+                        usernameVariable: 'SMOKE_EMAIL', passwordVariable: 'SMOKE_PASSWORD')
+                ]) {
+                    timeout(time: 15, unit: 'MINUTES') {
+                        sh 'python3 scripts/verify-staging.py'
+                    }
+                }
+            }
+        }
+
+        stage('검증 완료 이미지 태그 발행') {
+            // 배포·동일 digest·Pod·API 검증 성공 시에만 verified-tree 태그를 만든다.
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -209,10 +255,11 @@ pipeline {
                         trap 'rm -rf "$DOCKER_CONFIG"' EXIT
                         printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
                         EXPECTED="$(cat "$WORKSPACE/.deploy-digest")"
+                        [ "$(cat "$WORKSPACE/.staging-verified")" = "$IMAGE_NAME@$EXPECTED" ]
                         # Tag the exact pushed digest, even if a local tag changed meanwhile.
                         docker pull -q "$IMAGE_NAME@$EXPECTED" >/dev/null
-                        docker tag "$IMAGE_NAME@$EXPECTED" "$IMAGE_NAME:tree-$TREE"
-                        docker push "$IMAGE_NAME:tree-$TREE"
+                        docker tag "$IMAGE_NAME@$EXPECTED" "$IMAGE_NAME:verified-tree-$TREE"
+                        docker push "$IMAGE_NAME:verified-tree-$TREE"
                     '''
                 }
             }
@@ -221,7 +268,11 @@ pipeline {
 
     post {
         success {
-            echo "${env.SOURCE_BRANCH} → 인프라 overlays/${env.DEPLOY_ENV} 갱신 완료. Argo CD 동기화·Healthy 상태는 별도로 확인하세요."
+            script {
+                echo env.DEPLOY_ENV == 'staging' ?
+                    'staging 배포·digest·Pod·백엔드 API 검증 및 검증 태그 발행 완료' :
+                    'prod 매니페스트 갱신 완료. 실제 prod 배포 상태는 Argo CD에서 확인하세요.'
+            }
         }
         always {
             notifyDiscord('devoops-backend')
