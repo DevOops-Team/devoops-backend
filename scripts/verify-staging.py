@@ -197,6 +197,31 @@ def verify(workspace, revision, image, email, password, get_snapshot=snapshot, o
     raise RuntimeError("staging 배포 검증 시간 초과")
 
 
+
+def check_permissions():
+    required = (
+        ("argocd", "get", "applications.argoproj.io/portal-staging"),
+        (NAMESPACE, "get", "deployments.apps/backend"),
+        (NAMESPACE, "get", "rollouts.argoproj.io/backend"),
+        (NAMESPACE, "get", "services/backend"),
+        (NAMESPACE, "get", "pods"),
+        (NAMESPACE, "list", "pods"),
+        (NAMESPACE, "watch", "pods"),
+        (NAMESPACE, "create", "pods/portforward"),
+    )
+    missing = []
+    for namespace, verb, resource in required:
+        try:
+            allowed = kubectl("-n", namespace, "auth", "can-i", verb, resource, as_json=False) == "yes"
+        except subprocess.CalledProcessError:
+            allowed = False
+        print(f"staging 권한: {namespace} {verb} {resource}: {'yes' if allowed else 'no'}", flush=True)
+        if not allowed:
+            missing.append((namespace, verb, resource))
+    if missing:
+        raise RuntimeError("백엔드 staging 조회·port-forward 권한이 부족합니다")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--preflight", action="store_true")
@@ -211,9 +236,8 @@ def main():
     if config.get("clusters", [{}])[0].get("cluster", {}).get("server") != API_SERVER:
         raise RuntimeError("staging API(.61:6443) kubeconfig가 아닙니다")
     if args.preflight:
+        check_permissions()
         snapshot()
-        if kubectl("-n", NAMESPACE, "auth", "can-i", "create", "pods/portforward", as_json=False) != "yes":
-            raise RuntimeError("백엔드 검증 port-forward 권한이 없습니다")
         print("staging API·조회·port-forward 권한 사전 확인 성공")
         return
     digest = (workspace / ".deploy-digest").read_text().strip()

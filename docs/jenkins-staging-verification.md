@@ -9,12 +9,19 @@ main은 이 검증 태그만 조회한다. 이전 `tree-<내용해시>` 태그�
 
 | ID (기본값) | 타입 | 용도 |
 | --- | --- | --- |
-| `k8s-staging-backend-verify` | Secret file | staging 조회·백엔드 Pod port-forward 전용 kubeconfig |
+| `k8s-staging-mongo` | Secret file | staging 조회·백엔드 Pod port-forward 전용 kubeconfig |
 | `staging-backend-smoke` | Username with password | staging 전용 USER 계정의 이메일 / 비밀번호 |
 
 각 ID는 Jenkins 작업 파라미터 `STAGING_VERIFY_CREDENTIALS`, `STAGING_SMOKE_CREDENTIALS`로 지정한다.
-기존 `k8s-staging-mongo`는 통합 테스트 DB 터널용이므로 변경하지 않는다.
-기존 프론트 조회 kubeconfig가 backend 권한도 포함할 때만 같은 파일을 재사용할 수 있다.
+기본값은 기존 통합 테스트 DB 터널용 `k8s-staging-mongo`를 재사용한다.
+단, Mongo 접속 권한만으로는 부족하다. 아래 조회·port-forward 권한이 있는 경우에만
+백엔드 배포 검증에도 사용할 수 있다. 스테이징 검증 권한 확인 단계가 각 권한의 yes/no를
+출력하고 하나라도 부족하면 빌드 전에 중단한다. 실제 리소스 조회도 확인한다.
+권한 부족 시 staging 관리자가 해당 계정에 RBAC를 추가하거나 별도 계정을 발급한다.
+별도 파일을 Secret file `k8s-staging-backend-verify`로 등록했다면
+Build with Parameters에서 `STAGING_VERIFY_CREDENTIALS=k8s-staging-backend-verify`로 지정한다.
+기존 작업에 저장된 파라미터 값이 있다면 재사용하려는 ID로 직접 변경한다.
+이 코드 변경이 클러스터 RBAC를 자동으로 추가하지는 않는다.
 운영 admin kubeconfig를 사용하지 않는다. 검증 스크립트는 API 주소
 `https://172.30.0.61:6443`와 namespace `vdi-staging`만 허용한다.
 

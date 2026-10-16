@@ -159,6 +159,20 @@ class StagingTests(unittest.TestCase):
             process.terminate.assert_called_once()
             process.wait.assert_called_once()
 
+    def test_missing_backend_permission_blocks_preflight(self):
+        for denied in (("get", "services/backend"), ("get", "rollouts.argoproj.io/backend"),
+                       ("create", "pods/portforward")):
+            with self.subTest(denied=denied):
+                def kube(*args, as_json=True):
+                    if args[-2:] == denied:
+                        # kubectl auth can-i returns exit 1 for denied access.
+                        raise verify.subprocess.CalledProcessError(1, "kubectl")
+                    return "yes"
+                with mock.patch.object(verify, "kubectl", side_effect=kube) as command:
+                    with self.assertRaises(RuntimeError):
+                        verify.check_permissions()
+                    self.assertEqual(command.call_count, 8)
+
     def test_preflight_cluster_and_portforward_guard(self):
         with tempfile.TemporaryDirectory() as directory:
             env = {"WORKSPACE": directory, "SOURCE_BRANCH": "develop", "DEPLOY_ENV": "staging",
