@@ -173,6 +173,30 @@ class StagingTests(unittest.TestCase):
                         verify.check_permissions()
                     self.assertEqual(command.call_count, 8)
 
+    def test_kubectl_diagnostic_never_prints_raw_stderr(self):
+        secret = "private-token-password"
+        for stderr, label in (("Forbidden " + secret, "권한 거부"),
+                              ("Unauthorized " + secret, "인증 실패"),
+                              ("NotFound " + secret, "리소스 없음")):
+            with self.subTest(label=label):
+                error = verify.subprocess.CalledProcessError(1, "kubectl", stderr=stderr)
+                with mock.patch.object(verify.subprocess, "run", side_effect=error):
+                    with self.assertRaises(verify.VerificationError) as caught:
+                        verify.kubectl("-n", "argocd", "get", "application", "portal-staging")
+                message = verify.failure_message(caught.exception)
+                self.assertIn(label, message)
+                self.assertIn("portal-staging", message)
+                self.assertNotIn(secret, message)
+
+    def test_unknown_exception_diagnostic_hides_contents(self):
+        try:
+            raise ValueError("private-password-and-token")
+        except ValueError as error:
+            message = verify.failure_message(error)
+        self.assertIn("ValueError", message)
+        self.assertNotIn("private-password", message)
+        self.assertEqual(verify.failure_message(verify.VerificationError("safe reason")), "safe reason")
+
     def test_preflight_cluster_and_portforward_guard(self):
         with tempfile.TemporaryDirectory() as directory:
             env = {"WORKSPACE": directory, "SOURCE_BRANCH": "develop", "DEPLOY_ENV": "staging",

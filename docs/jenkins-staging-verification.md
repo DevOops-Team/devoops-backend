@@ -67,3 +67,11 @@ main 승격은 이 검증 코드를 포함한 develop이 승인된 CR로 머지�
 이번 변경은 Jenkinsfile·검증 스크립트·문서다. Credential 발급/등록, RBAC 변경, 실제 Jenkins 빌드나
 staging/prod 배포는 실행하지 않는다. Jenkins가 수정 커밋을 자동 감지하면 실제 빌드가 시작될 수 있다.
 로컬에서는 `python3 scripts/test-verify-staging.py`로 모의 배포·API 검증을 실행한다.
+
+## 실패 로그 확인
+
+검증 로그는 kubeconfig 주소 확인 → 입력 digest·revision 파일 확인 → Kubernetes 리소스 조회 →
+Pod API·인증 검사 순서로 진행 위치를 표시한다. 실패 시 권한 거부(RBAC), 인증 실패,
+리소스 없음, 연결·요청 시간 초과 또는 검증 조건의 실패 이유를 출력한다.
+예상하지 못한 예외는 종류와 코드 위치만 표시한다. kubectl 원문 stderr, HTTP 응답 본문,
+비밀번호·토큰은 출력하지 않는다. 로그 개선은 RBAC나 배포 장애 자체를 해결하는 변경은 아니다.
