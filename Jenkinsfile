@@ -19,7 +19,7 @@ pipeline {
     }
 
     stages {
-        stage('소스 가져오기') {
+        stage('소스 가져오기 [develop·main]') {
             // develop → 테스트 · 빌드 · staging 매니페스트 반영 / main → 사람이 staging을 확인한 같은 이미지를 prod로 (10-14 결정 A안)
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -51,7 +51,7 @@ pipeline {
             }
         }
 
-        stage('검사 도구 확인') {
+        stage('도구 확인 [develop·main]') {
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
                 sh '''
@@ -77,7 +77,7 @@ pipeline {
             }
         }
 
-        stage('정적 검사') {
+        stage('정적 검사 [develop]') {
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -85,7 +85,7 @@ pipeline {
             }
         }
 
-        stage('단위 테스트') {
+        stage('단위 테스트 [develop]') {
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -93,7 +93,7 @@ pipeline {
             }
         }
 
-        stage('통합 테스트') {
+        stage('Mongo 통합 테스트 [develop]') {
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -104,7 +104,7 @@ pipeline {
             }
         }
 
-        stage('이미지 빌드') {
+        stage('이미지 빌드 [develop]') {
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -115,7 +115,7 @@ pipeline {
             }
         }
 
-        stage('이미지 보안 검사') {
+        stage('Trivy 보안 검사 [develop]') {
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -126,7 +126,7 @@ pipeline {
             }
         }
 
-        stage('GHCR 이미지 업로드') {
+        stage('GHCR 빌드 이미지 업로드 [develop]') {
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -146,7 +146,7 @@ pipeline {
             }
         }
 
-        stage('운영 승격 이미지 조회') {
+        stage('GHCR tree 태그 조회 [main → prod]') {
             // main: 새로 빌드하지 않는다 — develop에서 테스트 · 빌드 · staging 반영까지 끝난 같은 digest
             when { expression { env.DEPLOY_ENV == 'prod' } }
             steps {
@@ -170,7 +170,7 @@ pipeline {
             }
         }
 
-        stage('인프라 이미지 반영') {
+        stage('매니페스트 digest 갱신 [develop → staging·main → prod]') {
             // CollabOps devoops-infra overlays/<staging|prod> → GitHub 미러 → Argo CD
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -204,7 +204,7 @@ pipeline {
             }
         }
 
-        stage('승격용 이미지 태그 발행') {
+        stage('GHCR tree 태그 발행 [develop]') {
             // staging 매니페스트 갱신 후 같은 digest의 tree 태그를 발행한다. 실제 배포 확인은 사람이 한다.
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
