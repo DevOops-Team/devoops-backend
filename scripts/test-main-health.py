@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import importlib.util
+import io
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -49,6 +51,33 @@ class MainHealthTests(unittest.TestCase):
         with patch.object(startup,'docker') as docker:
             with self.assertRaises(RuntimeError): startup.check_image({'SOURCE_BRANCH':'develop','DEPLOY_ENV':'staging'})
             docker.assert_not_called()
+
+    def test_mock_exposes_compute_and_image_version_discovery(self):
+        with patch('http.server.HTTPServer'):
+            scope = {}
+            exec(startup.MOCK, scope)
+        for path in ('/compute/', '/image/'):
+            handler = object.__new__(scope['Handler'])
+            handler.path = path
+            handler.wfile = io.BytesIO()
+            handler.send_response = lambda status: self.assertEqual(status, 200)
+            handler.send_header = lambda *args: None
+            handler.end_headers = lambda: None
+            handler.do_GET()
+            version = json.loads(handler.wfile.getvalue())['versions'][0]
+            self.assertEqual(version['id'], 'v2.0')
+            self.assertEqual(version['links'][0]['href'], 'http://cloud:8000'+path)
+
+    def test_startup_diagnostic_redacts_arbitrary_log_text(self):
+        logs = '\n'.join([json.dumps({'msg':'startup failed','reason':'Nova endpoint unavailable'}),
+                            'private-password'])
+        with patch.object(startup,'docker',side_effect=[json.dumps({'ExitCode':1,'OOMKilled':False}),logs]):
+            message = startup.startup_failure('ci-container')
+        self.assertIn('Compute',message)
+        self.assertNotIn('private-password',message)
+        with patch.object(startup,'docker',side_effect=[json.dumps({'ExitCode':1}),
+                         json.dumps({'msg':'startup failed','reason':'secret-token'})]):
+            self.assertNotIn('secret-token',startup.startup_failure('ci-container'))
 
     def test_embedded_mock_and_http_probe_compile(self):
         compile(startup.MOCK, '<mock-cloud>', 'exec')
