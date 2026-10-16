@@ -101,9 +101,13 @@ func run() error {
 	if e != nil || homeVolumeGB < 0 {
 		return errors.New("invalid OS_HOME_VOLUME_GB")
 	}
+	windowsBootVolume, e := strconv.ParseBool(env("OS_WINDOWS_BOOT_VOLUME", "true"))
+	if e != nil {
+		return errors.New("invalid OS_WINDOWS_BOOT_VOLUME")
+	}
 	startup, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	provider, e := cloud.New(startup, cloud.Config{Auth: auth, Region: os.Getenv("OS_REGION_NAME"), Network: os.Getenv("OS_NETWORK_ID"), ServiceID: env("VDI_SERVICE_ID", "devoops-vdi"), SecurityGroups: strings.Split(os.Getenv("OS_SECURITY_GROUPS"), ","), Timeout: timeout, HomeVolumeGB: homeVolumeGB})
+	provider, e := cloud.New(startup, cloud.Config{Auth: auth, Region: os.Getenv("OS_REGION_NAME"), Network: os.Getenv("OS_NETWORK_ID"), ServiceID: env("VDI_SERVICE_ID", "devoops-vdi"), SecurityGroups: strings.Split(os.Getenv("OS_SECURITY_GROUPS"), ","), Timeout: timeout, HomeVolumeGB: homeVolumeGB, WindowsBootVolume: windowsBootVolume})
 	if e != nil {
 		return e
 	}

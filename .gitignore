@@ -3,3 +3,6 @@
 *.log
 /bin/
 /deploy/secret.yaml
+.deploy-digest
+.staging-infra-revision
+.staging-verified

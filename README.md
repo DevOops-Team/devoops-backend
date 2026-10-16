@@ -35,6 +35,7 @@ curl -i http://localhost:8080/api/auth/login \
 | `OS_REGION_NAME` | 서비스 카탈로그 리전 |
 | `OS_NETWORK_ID`, `OS_SECURITY_GROUPS` | VM 네트워크 UUID, 쉼표로 구분한 보안 그룹 이름 |
 | `OS_HOME_VOLUME_GB` | 데스크톱마다 붙이는 빈 Cinder 데이터 볼륨 크기(GB, 기본 `5`, `0`이면 붙이지 않음). 이미지가 이 볼륨을 `/home`으로 마운트해 evacuate 뒤에도 데이터가 남는다. 데스크톱 삭제 때 함께 삭제 |
+| `OS_WINDOWS_BOOT_VOLUME` | `true`(기본)면 WINDOWS 데스크톱은 이미지로 만든 Cinder 볼륨(크기 = 데스크톱 저장 용량)으로 부팅하고 `/home` 볼륨은 붙이지 않는다. Windows는 사용자 데이터가 `C:\Users`에 있어 루트 디스크 전체를 볼륨에 둬야 evacuate 뒤에도 남는다. 데스크톱 삭제 때 함께 삭제 |
 | `VDI_SERVICE_ID` | metadata 자원 추적 범위, 기본 `devoops-vdi`; 운영 DB마다 고유하고 재시작 시 유지 |
 | `OS_IMAGES_JSON` | `name`, `type`, `version`, `imageId`를 갖는 OS 등록 배열 |
 | `RDP_CREDENTIALS_JSON` | OS 타입별 `username`, `password`, 선택 `domain` 객체 |
@@ -123,13 +124,15 @@ TEST_MONGO_URI='mongodb://127.0.0.1:27018/?replicaSet=rs0&directConnection=true'
 
 최종 성공·실패 Discord 알림의 Credential 설정과 메시지 항목, 확인 방법은
 [Jenkins Discord 알림](docs/jenkins-discord.md)을 참고하세요.
+staging 확인과 main 승격 절차는
+[백엔드 staging 확인](docs/jenkins-staging-verification.md)을 참고하세요.
 
 이슈 #90의 최종 결정(2026-10-14 14:21 댓글, CR-60·62·63)에 맞춰 브랜치별로 동작합니다.
 
 | 백엔드 브랜치 | Jenkins 동작 | 인프라 변경 |
 | --- | --- | --- |
-| `develop` | vet·단위/통합 테스트·Docker build·Trivy·GHCR push | `main`의 `k8s/portal/overlays/staging/kustomization.yaml` |
-| `main` | 새 빌드 없이 같은 tree의 GHCR 이미지 조회 | `main`의 `k8s/portal/overlays/prod/kustomization.yaml` |
+| `develop` | 테스트·빌드·Trivy·GHCR push → staging 매니페스트 갱신 → 승격용 태그 발행 | `main`의 `k8s/portal/overlays/staging/kustomization.yaml` |
+| `main` | 기존 이미지 조회 → 격리 기동 검사 → prod 매니페스트 갱신 → 운영 HTTP 확인 | `main`의 `k8s/portal/overlays/prod/kustomization.yaml` |
 | 그 외 | 중단 | 없음 |
 
 staging 태그 갱신은 자동입니다. staging 동기화·서비스 검증 후 사람이 백엔드 `develop → main` CR을
@@ -137,9 +140,14 @@ staging 태그 갱신은 자동입니다. staging 동기화·서비스 검증 �
 백엔드 main 브랜치의 CR 승인·직접 push 차단 규칙은 collabops에서 설정해야 합니다.
 
 배포 참조는 `newTag` 대신 불변 `digest: sha256:...`를 사용합니다. GHCR에는 빌드별 태그와
-내용 해시 기반 `tree-<해시>` 태그를 사용합니다. 승격용 tree 태그는 staging 매니페스트 갱신 성공 후
-같은 digest로 발행합니다. main 내용에 대응하는 태그가 없으면 prod 변경 전에 실패합니다.
-매니페스트 갱신 성공은 Argo CD Healthy나 실제 서비스 검증 완료를 의미하지 않으므로 CR 승인 전에 확인합니다.
+내용 해시 기반 `tree-<해시>` 태그를 사용합니다. staging 매니페스트 갱신 후 같은 digest로
+승격용 태그를 발행합니다. 이 태그는 실제 배포·API 검증 통과의 증거가 아닙니다.
+Jenkins는 Argo CD 상태·Pod를 조회하지 않습니다. main에서는 임시 환경의 새 이미지 기동과
+배포 지시 후 운영 HTTP 응답을 검사합니다. 담당자가 Argo CD 배포 결과와 기능을
+확인한 뒤 동일 내용의 develop → main CR을 승인해야 합니다.
+main 내용에 대응하는 태그가 없으면 prod 변경 전에 실패합니다.
+새 Jenkinsfile이 main에 병합되어야 main도 tree 태그 조회·기동·운영 HTTP 검사 방식을 사용합니다.
+운영 HTTP 응답만으로 새 digest의 배포 완료를 증명하지는 않습니다.
 
 인프라 저장소의 `ci/update-image.sh`를 호출하며 staging·prod 모두 collabops 원본 `main`에
 직접 반영합니다. GitHub 미러에는 쓰지 않습니다. Kustomize와 `co` 인증은 필요하지 않습니다.
