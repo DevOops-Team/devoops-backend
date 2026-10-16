@@ -11,7 +11,7 @@ pipeline {
 
     parameters {
         string(name: 'STAGING_VERIFY_CREDENTIALS', defaultValue: 'k8s-staging-backend-verify',
-            description: 'staging Argo CD·Deployment·Service·Pod 조회 및 backend port-forward kubeconfig')
+            description: 'staging Argo CD·Rollout·Deployment·Service·Pod 조회 및 backend port-forward kubeconfig')
         string(name: 'STAGING_SMOKE_CREDENTIALS', defaultValue: 'staging-backend-smoke',
             description: 'staging 전용 USER 테스트 계정 이메일·비밀번호 (Username with password)')
     }

@@ -21,7 +21,7 @@ main은 이 검증 태그만 조회한다. 이전 `tree-<내용해시>` 태그�
 필요한 권한:
 
 - `argocd`: `argoproj.io/applications`의 `portal-staging` get
-- `vdi-staging`: `apps/deployments`의 `backend` get
+- `vdi-staging`: `apps/deployments`의 `backend` get, `argoproj.io/rollouts`의 `backend` get
 - `vdi-staging`: core Services의 `backend` get, Pods get/list/watch
 - `vdi-staging`: core Pods/portforward create (kubectl 버전에 따라 get도 허용)
 - `kubectl auth can-i` 확인을 위한 SelfSubjectAccessReview 생성 (일반 인증 사용자의 기본 권한)
@@ -35,7 +35,7 @@ main은 이 검증 태그만 조회한다. 이전 `tree-<내용해시>` 태그�
 1. 이미지 반영 후 infra main을 다시 읽어 staging digest가 이번 이미지와 같은지 확인하고 revision을 저장한다.
 2. Argo CD `portal-staging`이 main을 추적하며 해당 revision에 대해 동기화·Healthy·작업 Succeeded인지 확인한다.
    `prune:false`의 정리 대기 리소스만 OutOfSync이면 인프라 기존 검증과 동일하게 허용한다.
-3. backend Deployment가 이번 digest이며 generation 반영·updated/ready/available replica가 목표 수와 같은지 확인한다.
+3. backend Deployment의 이미지가 이번 digest인지, backend Rollout이 최신 자체 generation과 Deployment generation을 관찰했는지 확인한다. Rollout Healthy 및 updated/ready/available/전체 replica가 Rollout 목표 수와 같아야 한다. Deployment는 workloadRef 이관 후 0개일 수 있으므로 Deployment replica를 목표 Pod 수로 사용하지 않는다.
 4. 삭제 중인 Pod를 제외한 모든 backend Pod가 같은 digest·Ready·Running인지 확인한다.
    containerd imageID는 멀티플랫폼 manifest와 다를 수 있으므로 이미지 일치 기준은 Pod 스펙의 불변 digest다.
 5. 각 Pod에 임시 localhost 포트로 터널을 열어 다음 API를 검사하고 종료한다.

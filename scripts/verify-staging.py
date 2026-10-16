@@ -27,7 +27,7 @@ def kubectl(*args, as_json=True):
     return json.loads(result.stdout) if as_json else result.stdout.strip()
 
 
-def deployment_ready(app, deployment, pods, service, revision, image):
+def deployment_ready(app, deployment, pods, service, revision, image, rollout=None):
     status = app.get("status", {})
     sync = status.get("sync", {})
     operation = status.get("operationState", {})
@@ -43,14 +43,26 @@ def deployment_ready(app, deployment, pods, service, revision, image):
             operation.get("phase") != "Succeeded" or
             operation.get("syncResult", {}).get("revision") != revision):
         return False
-    count = deployment.get("spec", {}).get("replicas", 1)
-    ds = deployment.get("status", {})
     containers = deployment.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
-    if (count < 1 or not any(c.get("name") == "backend" and c.get("image") == image for c in containers) or
-            ds.get("observedGeneration") != deployment.get("metadata", {}).get("generation") or
-            any(ds.get(key, 0) != count for key in ("replicas", "updatedReplicas", "readyReplicas", "availableReplicas")) or
-            ds.get("unavailableReplicas", 0) != 0):
+    if not any(c.get("name") == "backend" and c.get("image") == image for c in containers):
         return False
+    if rollout is not None:
+        count = rollout.get("spec", {}).get("replicas", 1)
+        rs = rollout.get("status", {})
+        ref = rollout.get("spec", {}).get("workloadRef", {})
+        if (count < 1 or ref.get("kind") != "Deployment" or ref.get("name") != "backend" or
+                rs.get("phase") != "Healthy" or
+                str(rs.get("observedGeneration")) != str(rollout.get("metadata", {}).get("generation")) or
+                str(rs.get("workloadObservedGeneration")) != str(deployment.get("metadata", {}).get("generation")) or
+                any(rs.get(key, 0) != count for key in ("replicas", "updatedReplicas", "readyReplicas", "availableReplicas"))):
+            return False
+    else:
+        count = deployment.get("spec", {}).get("replicas", 1)
+        ds = deployment.get("status", {})
+        if (count < 1 or ds.get("observedGeneration") != deployment.get("metadata", {}).get("generation") or
+                any(ds.get(key, 0) != count for key in ("replicas", "updatedReplicas", "readyReplicas", "availableReplicas")) or
+                ds.get("unavailableReplicas", 0) != 0):
+            return False
     ss = service.get("spec", {})
     if ss.get("selector", {}).get("app") != "backend" or not any(p.get("port") == 8080 for p in ss.get("ports", [])):
         return False
@@ -157,6 +169,7 @@ def snapshot():
         kubectl("-n", NAMESPACE, "get", "deployment", "backend"),
         kubectl("-n", NAMESPACE, "get", "pods", "-l", "app=backend"),
         kubectl("-n", NAMESPACE, "get", "service", "backend"),
+        kubectl("-n", NAMESPACE, "get", "rollout", "backend"),
     )
 
 
@@ -164,15 +177,17 @@ def verify(workspace, revision, image, email, password, get_snapshot=snapshot, o
     marker = workspace / ".staging-verified"
     marker.unlink(missing_ok=True)
     deadline = time.monotonic() + limit
+    def ready(data):
+        return deployment_ready(*data[:4], revision, image, rollout=data[4] if len(data) > 4 else None)
     while time.monotonic() < deadline:
         current = get_snapshot()  # Kubernetes/RBAC errors fail immediately; do not hide them as a rollout wait.
-        if deployment_ready(*current, revision, image):
+        if ready(current):
             # Check every serving Pod of this exact immutable image, not a possibly stale external proxy.
             for pod in current[2]["items"]:
                 if not pod.get("metadata", {}).get("deletionTimestamp"):
                     with open_tunnel(pod["metadata"]["name"]) as base:
                         check(base, email, password)
-            if not deployment_ready(*get_snapshot(), revision, image):
+            if not ready(get_snapshot()):
                 raise RuntimeError("API 검사 중 staging revision·이미지·Pod 상태가 변경되었습니다")
             marker.write_text(image)
             print("staging 배포·revision·digest·Pod·헬스·핵심 API 검증 성공")

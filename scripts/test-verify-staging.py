@@ -54,6 +54,21 @@ class StagingTests(unittest.TestCase):
                 mutate(*data)
                 self.assertFalse(verify.deployment_ready(*data, REV, IMAGE))
 
+    def test_rollout_replicas_and_workload_generation(self):
+        data = fixture()
+        data[1]["spec"]["replicas"] = 0
+        data[1]["status"]["replicas"] = 0
+        data[2]["items"].append(copy.deepcopy(data[2]["items"][0]))
+        ro = {"metadata": {"generation": 4}, "spec": {"replicas": 2,
+              "workloadRef": {"kind": "Deployment", "name": "backend"}}, "status": {
+              "phase": "Healthy", "observedGeneration": "4", "workloadObservedGeneration": "3",
+              "replicas": 2, "updatedReplicas": 2, "readyReplicas": 2, "availableReplicas": 2}}
+        self.assertTrue(verify.deployment_ready(*data, REV, IMAGE, rollout=ro))
+        for key, value in [("phase", "Degraded"), ("updatedReplicas", 1), ("workloadObservedGeneration", "2")]:
+            bad = copy.deepcopy(ro)
+            bad["status"][key] = value
+            self.assertFalse(verify.deployment_ready(*data, REV, IMAGE, rollout=bad))
+
     def test_only_pruning_out_of_sync_is_accepted(self):
         data = fixture()
         data[0]["status"]["sync"]["status"] = "OutOfSync"
