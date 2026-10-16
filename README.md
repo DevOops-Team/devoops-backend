@@ -131,8 +131,8 @@ staging 확인과 main 승격 절차는
 
 | 백엔드 브랜치 | Jenkins 동작 | 인프라 변경 |
 | --- | --- | --- |
-| `develop` | 테스트·빌드·Trivy·GHCR push → staging 매니페스트 갱신 → 승격용 태그 발행 | `main`의 `k8s/portal/overlays/staging/kustomization.yaml` |
-| `main` | 기존 이미지 조회 → 격리 기동 검사 → prod 매니페스트 갱신 → 운영 HTTP 확인 | `main`의 `k8s/portal/overlays/prod/kustomization.yaml` |
+| `develop` | 테스트·빌드·Trivy·GHCR push → staging 매니페스트 갱신 → 승격용 태그 발행 | `main`의 `overlays/staging/kustomization.yaml` |
+| `main` | 기존 이미지 조회 → 격리 기동 검사 → prod 매니페스트 갱신 → 운영 HTTP 확인 | `main`의 `overlays/prod/kustomization.yaml` |
 | 그 외 | 중단 | 없음 |
 
 staging 태그 갱신은 자동입니다. staging 동기화·서비스 검증 후 사람이 백엔드 `develop → main` CR을
