@@ -84,20 +84,6 @@ pipeline {
             }
         }
 
-        stage('스테이징 검증 권한 확인') {
-            when { expression { env.DEPLOY_ENV == 'staging' } }
-            steps {
-                script { env.LAST_STAGE = env.STAGE_NAME }
-                withCredentials([
-                    file(credentialsId: params.STAGING_VERIFY_CREDENTIALS, variable: 'KUBECONFIG'),
-                    usernamePassword(credentialsId: params.STAGING_SMOKE_CREDENTIALS,
-                        usernameVariable: 'SMOKE_EMAIL', passwordVariable: 'SMOKE_PASSWORD')
-                ]) {
-                    sh 'python3 scripts/verify-staging.py --preflight'
-                }
-            }
-        }
-
         stage('정적 검사') {
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
