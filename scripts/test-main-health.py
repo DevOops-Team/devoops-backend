@@ -26,7 +26,7 @@ class MainHealthTests(unittest.TestCase):
             with self.subTest(broken=broken), tempfile.TemporaryDirectory() as root:
                 digest = 'sha256:'+'a'*64
                 Path(root,'.deploy-digest').write_text(digest)
-                env = {'WORKSPACE':root,'SOURCE_BRANCH':'main','DEPLOY_ENV':'prod',
+                env = {'WORKSPACE':root,'SOURCE_BRANCH':'develop','DEPLOY_ENV':'staging',
                        'IMAGE_NAME':'ghcr.io/devoops-team/devoops-backend'}
                 calls = []
                 def docker(*args):
@@ -47,9 +47,9 @@ class MainHealthTests(unittest.TestCase):
                 checks = [c for c in calls if c[0]=='exec' and c[-1]==startup.HTTP_CHECK]
                 self.assertEqual(len(checks),0 if broken else 3)
 
-    def test_startup_rejects_develop_before_docker(self):
+    def test_startup_rejects_main_before_docker(self):
         with patch.object(startup,'docker') as docker:
-            with self.assertRaises(RuntimeError): startup.check_image({'SOURCE_BRANCH':'develop','DEPLOY_ENV':'staging'})
+            with self.assertRaises(RuntimeError): startup.check_image({'SOURCE_BRANCH':'main','DEPLOY_ENV':'prod'})
             docker.assert_not_called()
 
     def test_mock_exposes_compute_and_image_version_discovery(self):
@@ -121,12 +121,12 @@ class MainHealthTests(unittest.TestCase):
 
     def test_pipeline_orders_pre_and_post_deploy_checks(self):
         text=Path(__file__).parent.parent.joinpath('Jenkinsfile').read_text()
-        stages=['이미지 조회 [main]','이미지 기동 검사 [main]','매니페스트 갱신 [develop·main]','운영 HTTP 확인 [main]']
+        stages=['이미지 업로드 [develop]','이미지 기동 검사 [develop]','이미지 조회 [main]','매니페스트 갱신 [develop·main]','운영 HTTP 확인 [main]']
         positions=[text.index("stage('"+name+"')") for name in stages]
         self.assertEqual(positions,sorted(positions))
-        for name in ('이미지 기동 검사 [main]','운영 HTTP 확인 [main]'):
+        for name, target in (('이미지 기동 검사 [develop]', 'staging'), ('운영 HTTP 확인 [main]', 'prod')):
             section=text.split("stage('"+name+"')",1)[1].split("stage('",1)[0]
-            self.assertIn("env.DEPLOY_ENV == 'prod'",section)
+            self.assertIn(f"env.DEPLOY_ENV == '{target}'",section)
 
 
 if __name__=='__main__': unittest.main()

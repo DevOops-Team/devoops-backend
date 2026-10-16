@@ -148,6 +148,16 @@ pipeline {
             }
         }
 
+        stage('이미지 기동 검사 [develop]') {
+            when { expression { env.DEPLOY_ENV == 'staging' } }
+            steps {
+                script { env.LAST_STAGE = env.STAGE_NAME }
+                timeout(time: 10, unit: 'MINUTES') {
+                    sh 'python3 scripts/check-image-startup.py'
+                }
+            }
+        }
+
         stage('이미지 조회 [main]') {
             // main: 새로 빌드하지 않는다 — develop에서 테스트 · 빌드 · staging 반영까지 끝난 같은 digest
             when { expression { env.DEPLOY_ENV == 'prod' } }
@@ -168,16 +178,6 @@ pipeline {
                         fi
                         docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE_NAME:tree-$TREE" | sed 's/.*@//' > "$WORKSPACE/.deploy-digest"
                     '''
-                }
-            }
-        }
-
-        stage('이미지 기동 검사 [main]') {
-            when { expression { env.DEPLOY_ENV == 'prod' } }
-            steps {
-                script { env.LAST_STAGE = env.STAGE_NAME }
-                timeout(time: 10, unit: 'MINUTES') {
-                    sh 'python3 scripts/check-image-startup.py'
                 }
             }
         }
@@ -254,8 +254,8 @@ pipeline {
         success {
             script {
                 echo env.DEPLOY_ENV == 'staging' ?
-                    'staging 매니페스트 갱신·승격용 태그 발행 완료. 실제 배포·기능은 사람이 확인한 후 main에 머지하세요.' :
-                    '새 이미지 기동·prod 매니페스트 갱신·운영 HTTP 확인 성공. 새 digest의 배포 완료는 Argo CD에서 별도 확인하세요.'
+                    '이미지 기동 검사·staging 매니페스트 갱신·승격용 태그 발행 완료. 실제 배포·기능은 사람이 확인한 후 main에 머지하세요.' :
+                    'prod 매니페스트 갱신·운영 HTTP 확인 성공. 새 digest의 배포 완료는 Argo CD에서 별도 확인하세요.'
             }
         }
         always {
