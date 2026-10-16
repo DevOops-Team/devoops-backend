@@ -128,8 +128,8 @@ TEST_MONGO_URI='mongodb://127.0.0.1:27018/?replicaSet=rs0&directConnection=true'
 
 | 백엔드 브랜치 | Jenkins 동작 | 인프라 변경 |
 | --- | --- | --- |
-| `develop` | vet·단위/통합 테스트·Docker build·Trivy·GHCR push | `main`의 `k8s/portal/overlays/staging/kustomization.yaml` |
-| `main` | 새 빌드 없이 같은 tree의 GHCR 이미지 조회 | `main`의 `k8s/portal/overlays/prod/kustomization.yaml` |
+| `develop` | vet·단위/통합 테스트·Docker build·Trivy·GHCR push | `main`의 `overlays/staging/kustomization.yaml` |
+| `main` | 새 빌드 없이 같은 tree의 GHCR 이미지 조회 | `main`의 `overlays/prod/kustomization.yaml` |
 | 그 외 | 중단 | 없음 |
 
 staging 태그 갱신은 자동입니다. staging 동기화·서비스 검증 후 사람이 백엔드 `develop → main` CR을

@@ -12,8 +12,8 @@ pipeline {
     environment {
         MONGO_KUBECONFIG_CREDENTIALS = 'k8s-staging-mongo'
         IMAGE_NAME = 'ghcr.io/devoops-team/devoops-backend'
-        // devoops-infra는 CollabOps 원본에 쓴다 (GitHub 미러에 쓰면 미러가 깨짐) — ci/update-image.sh
-        INFRA_REPO = 'git@collabops.ai:devoops/devoops-infra.git'
+        // devoops-manifests는 CollabOps 원본에 쓴다 (GitHub 미러에 쓰면 미러가 깨짐) — ci/update-image.sh
+        INFRA_REPO = 'git@collabops.ai:devoops/devoops-manifests.git'
         INFRA_SSH_KEY = '/var/jenkins_home/.ssh/id_ed25519_collabops_ci'
         GHCR_CREDENTIALS = 'ghcr-push'
     }
@@ -170,7 +170,7 @@ pipeline {
         }
 
         stage('Update infra image') {
-            // CollabOps devoops-infra overlays/<staging|prod> → GitHub 미러 → Argo CD
+            // CollabOps devoops-manifests overlays/<staging|prod> → GitHub 미러 → Argo CD
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
                 dir('infra-manifests') {
