@@ -36,6 +36,7 @@ class MainHealthTests(unittest.TestCase):
                         with self.assertRaises(RuntimeError): startup.check_image(env)
                     else: startup.check_image(env)
                 api = next(c for c in calls if c[0]=='run' and c[-1].endswith(digest))
+                self.assertIn('OS_DOMAIN_NAME=Default',api)
                 self.assertNotIn('-p',api)
                 self.assertNotIn('-v',api)
                 self.assertTrue(any(c[:3]==('network','create','--internal') for c in calls))
