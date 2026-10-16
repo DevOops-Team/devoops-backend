@@ -126,7 +126,7 @@ pipeline {
             }
         }
 
-        stage('GHCR 빌드 이미지 업로드 [develop]') {
+        stage('이미지 업로드 [develop]') {
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -146,7 +146,7 @@ pipeline {
             }
         }
 
-        stage('GHCR tree 태그 조회 [main → prod]') {
+        stage('이미지 조회 [main]') {
             // main: 새로 빌드하지 않는다 — develop에서 테스트 · 빌드 · staging 반영까지 끝난 같은 digest
             when { expression { env.DEPLOY_ENV == 'prod' } }
             steps {
@@ -170,7 +170,7 @@ pipeline {
             }
         }
 
-        stage('매니페스트 digest 갱신 [develop → staging·main → prod]') {
+        stage('매니페스트 갱신 [develop·main]') {
             // CollabOps devoops-infra overlays/<staging|prod> → GitHub 미러 → Argo CD
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
@@ -204,7 +204,7 @@ pipeline {
             }
         }
 
-        stage('GHCR tree 태그 발행 [develop]') {
+        stage('태그 발행 [develop]') {
             // staging 매니페스트 갱신 후 같은 digest의 tree 태그를 발행한다. 실제 배포 확인은 사람이 한다.
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
