@@ -15,8 +15,9 @@ main은 이 검증 태그만 조회한다. 이전 `tree-<내용해시>` 태그�
 각 ID는 Jenkins 작업 파라미터 `STAGING_VERIFY_CREDENTIALS`, `STAGING_SMOKE_CREDENTIALS`로 지정한다.
 기본값은 기존 통합 테스트 DB 터널용 `k8s-staging-mongo`를 재사용한다.
 단, Mongo 접속 권한만으로는 부족하다. 아래 조회·port-forward 권한이 있는 경우에만
-백엔드 배포 검증에도 사용할 수 있다. 스테이징 검증 권한 확인 단계가 각 권한의 yes/no를
-출력하고 하나라도 부족하면 빌드 전에 중단한다. 실제 리소스 조회도 확인한다.
+백엔드 배포 검증에도 사용할 수 있다. Jenkins는 빌드 전 권한 사전 점검을 하지 않으므로
+권한이 부족하면 배포 후 staging 검증 단계에서 실패한다. 미리 확인하려면
+`python3 scripts/verify-staging.py --preflight`를 수동으로 실행해 각 권한의 yes/no를 본다.
 권한 부족 시 staging 관리자가 해당 계정에 RBAC를 추가하거나 별도 계정을 발급한다.
 별도 파일을 Secret file `k8s-staging-backend-verify`로 등록했다면
 Build with Parameters에서 `STAGING_VERIFY_CREDENTIALS=k8s-staging-backend-verify`로 지정한다.
