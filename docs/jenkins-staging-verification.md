@@ -1,77 +1,30 @@
-# staging 실제 배포·백엔드 API 검증
+# staging 확인과 prod 승격
 
-develop 흐름은 테스트 → 이미지 빌드·보안 검사·GHCR push → staging 매니페스트 반영 →
-실제 배포·Pod·API 검증 → `verified-tree-<내용해시>` 태그 발행이다.
-main은 이 검증 태그만 조회한다. 이전 `tree-<내용해시>` 태그로 대체하거나 재빌드하지 않는다.
-검증 태그가 없으면 prod 매니페스트를 바꾸기 전에 실패한다.
+## 현재 Jenkins 흐름
 
-## Jenkins Credential
+- develop: 정적·단위·Mongo 통합 테스트 → 이미지 빌드 → Trivy → GHCR 업로드 →
+  infra main의 staging digest 갱신 → 동일 digest의 `tree-<내용해시>` 태그 발행.
+- main: 동일 내용의 tree 태그 조회 → 동일 digest로 infra main의 prod 매니페스트 갱신.
+  새 이미지를 빌드하지 않는다. 대응 태그가 없으면 실패한다.
 
-| ID (기본값) | 타입 | 용도 |
-| --- | --- | --- |
-| `k8s-staging-mongo` | Secret file | staging 조회·백엔드 Pod port-forward 전용 kubeconfig |
-| `staging-backend-smoke` | Username with password | staging 전용 USER 계정의 이메일 / 비밀번호 |
+Jenkins는 Argo CD Application·Deployment·Rollout·Pod 상태나 staging API를 검사하지 않는다.
+기존 `scripts/verify-staging.py`는 선택적 진단용으로 남겨두지만 Jenkinsfile에서는 호출하지 않는다.
+검증용 STAGING_VERIFY_CREDENTIALS·STAGING_SMOKE_CREDENTIALS 파라미터도 사용하지 않는다.
+기존 `k8s-staging-mongo`는 Mongo 통합 테스트에서 계속 필요하다. 해당 테스트의 Kubernetes 권한은 유지한다.
 
-각 ID는 Jenkins 작업 파라미터 `STAGING_VERIFY_CREDENTIALS`, `STAGING_SMOKE_CREDENTIALS`로 지정한다.
-기본값은 기존 통합 테스트 DB 터널용 `k8s-staging-mongo`를 재사용한다.
-단, Mongo 접속 권한만으로는 부족하다. 아래 조회·port-forward 권한이 있는 경우에만
-백엔드 배포 검증에도 사용할 수 있다. Jenkins는 빌드 전 권한 사전 점검을 하지 않으므로
-권한이 부족하면 배포 후 staging 검증 단계에서 실패한다. 미리 확인하려면
-`python3 scripts/verify-staging.py --preflight`를 수동으로 실행해 각 권한의 yes/no를 본다.
-권한 부족 시 staging 관리자가 해당 계정에 RBAC를 추가하거나 별도 계정을 발급한다.
-별도 파일을 Secret file `k8s-staging-backend-verify`로 등록했다면
-Build with Parameters에서 `STAGING_VERIFY_CREDENTIALS=k8s-staging-backend-verify`로 지정한다.
-기존 작업에 저장된 파라미터 값이 있다면 재사용하려는 ID로 직접 변경한다.
-이 코드 변경이 클러스터 RBAC를 자동으로 추가하지는 않는다.
-운영 admin kubeconfig를 사용하지 않는다. 검증 스크립트는 API 주소
-`https://172.30.0.61:6443`와 namespace `vdi-staging`만 허용한다.
+## 담당자의 승인 전 확인
 
-필요한 권한:
+1. infra staging digest가 이번 이미지인지 확인한다.
+2. staging Argo CD에서 해당 변경의 동기화·배포 결과와 Rollout·Pod 상태를 확인한다.
+3. staging 로그인·핵심 기능을 직접 검사한다. 알림이 없다는 것만으로 성공으로 판단하지 않는다.
+4. 성공을 확인한 뒤 같은 소스 내용의 develop → main 릴리스 CR을 승인·머지한다.
 
-- `argocd`: `argoproj.io/applications`의 `portal-staging` get
-- `vdi-staging`: `apps/deployments`의 `backend` get, `argoproj.io/rollouts`의 `backend` get
-- `vdi-staging`: core Services의 `backend` get, Pods get/list/watch
-- `vdi-staging`: core Pods/portforward create (kubectl 버전에 따라 get도 허용)
-- `kubectl auth can-i` 확인을 위한 SelfSubjectAccessReview 생성 (일반 인증 사용자의 기본 권한)
+Jenkins develop 성공은 매니페스트 갱신·승격용 태그 발행까지다. 실제 staging 배포 성공을 뜻하지 않는다.
+`tree-*` 태그도 자동 배포·API 검증 통과의 증거가 아니다.
+main 성공은 prod 매니페스트 갱신까지이며 실제 prod 카나리 완료는 Argo CD에서 확인한다.
+새 태그 조회 방식은 이 Jenkinsfile을 포함한 develop이 main에 병합된 뒤 적용된다.
 
-`staging-backend-smoke` 계정은 관리자가 staging에 미리 만든 전용 USER여야 한다.
-이 파이프라인은 계정이나 VM을 만들지 않는다. 로그인/로그아웃에 따른 세션·감사 이벤트만 생성하며
-실제 사용자 비밀번호나 관리자 계정을 사용하지 않는다. 테스트 계정의 VM 목록은 조회만 한다.
+## 변경 범위
 
-## 검증 내용
-
-1. 이미지 반영 후 infra main을 다시 읽어 staging digest가 이번 이미지와 같은지 확인하고 revision을 저장한다.
-2. Argo CD `portal-staging`이 main을 추적하며 해당 revision에 대해 동기화·Healthy·작업 Succeeded인지 확인한다.
-   `prune:false`의 정리 대기 리소스만 OutOfSync이면 인프라 기존 검증과 동일하게 허용한다.
-3. backend Deployment의 이미지가 이번 digest인지, backend Rollout이 최신 자체 generation과 Deployment generation을 관찰했는지 확인한다. Rollout Healthy 및 updated/ready/available/전체 replica가 Rollout 목표 수와 같아야 한다. Deployment는 workloadRef 이관 후 0개일 수 있으므로 Deployment replica를 목표 Pod 수로 사용하지 않는다.
-4. 삭제 중인 Pod를 제외한 모든 backend Pod가 같은 digest·Ready·Running인지 확인한다.
-   containerd imageID는 멀티플랫폼 manifest와 다를 수 있으므로 이미지 일치 기준은 Pod 스펙의 불변 digest다.
-5. 각 Pod에 임시 localhost 포트로 터널을 열어 다음 API를 검사하고 종료한다.
-   - `/healthz`: 200, JSON `status: ok` (MongoDB ping 포함)
-   - 미인증 `/api/me`: JSON 401
-   - `POST /api/auth/login`: 전용 계정 로그인, 토큰은 메모리에만 보관
-   - 인증된 `/api/me`: 계정 이메일·양의 ID·USER 역할 확인
-   - 인증된 `/api/desktops`: JSON 배열 200
-   - `POST /api/auth/logout`: 204, 기존 토큰으로 `/api/me` 재요청 시 401
-6. API 검사 후 배포 상태를 다시 조회한다. 같을 때만 이번 이미지의 `.staging-verified`를 기록한다.
-7. 태그 발행 단계가 마커와 digest를 다시 비교한 후 `verified-tree-...`를 push한다.
-
-API 검증은 외부 프론트 프록시가 아니라 실제 새 backend Pod를 대상으로 한다. 외부 라우팅,
-OpenStack VM 생성·삭제·RDP·Guacamole E2E 검증을 대신하지 않는다.
-DB/인증/핵심 조회가 실패하거나 RBAC·클러스터 주소가 틀리면 승격 태그를 발행하지 않는다.
-동시 인프라 변경으로 Argo CD가 저장한 revision을 건너뛰면 실패할 수 있으므로 최신 develop 빌드를 다시 실행한다.
-main 승격은 이 검증 코드를 포함한 develop이 승인된 CR로 머지된 뒤 사용한다.
-
-## 범위
-
-이번 변경은 Jenkinsfile·검증 스크립트·문서다. Credential 발급/등록, RBAC 변경, 실제 Jenkins 빌드나
-staging/prod 배포는 실행하지 않는다. Jenkins가 수정 커밋을 자동 감지하면 실제 빌드가 시작될 수 있다.
-로컬에서는 `python3 scripts/test-verify-staging.py`로 모의 배포·API 검증을 실행한다.
-
-## 실패 로그 확인
-
-검증 로그는 kubeconfig 주소 확인 → 입력 digest·revision 파일 확인 → Kubernetes 리소스 조회 →
-Pod API·인증 검사 순서로 진행 위치를 표시한다. 실패 시 권한 거부(RBAC), 인증 실패,
-리소스 없음, 연결·요청 시간 초과 또는 검증 조건의 실패 이유를 출력한다.
-예상하지 못한 예외는 종류와 코드 위치만 표시한다. kubectl 원문 stderr, HTTP 응답 본문,
-비밀번호·토큰은 출력하지 않는다. 로그 개선은 RBAC나 배포 장애 자체를 해결하는 변경은 아니다.
+Argo CD·Rollouts의 배포·알림 설정은 변경하지 않는다. 배포 여부는 사람이 확인한다.
+이 변경으로 실제 Jenkins 빌드나 staging/prod 배포 성공을 검증한 것은 아니다.

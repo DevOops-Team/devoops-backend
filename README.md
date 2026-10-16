@@ -124,15 +124,15 @@ TEST_MONGO_URI='mongodb://127.0.0.1:27018/?replicaSet=rs0&directConnection=true'
 
 최종 성공·실패 Discord 알림의 Credential 설정과 메시지 항목, 확인 방법은
 [Jenkins Discord 알림](docs/jenkins-discord.md)을 참고하세요.
-staging 실제 배포·헬스·핵심 API 검증의 Credential과 권한은
-[백엔드 staging 검증](docs/jenkins-staging-verification.md)을 참고하세요.
+staging 확인과 main 승격 절차는
+[백엔드 staging 확인](docs/jenkins-staging-verification.md)을 참고하세요.
 
 이슈 #90의 최종 결정(2026-10-14 14:21 댓글, CR-60·62·63)에 맞춰 브랜치별로 동작합니다.
 
 | 백엔드 브랜치 | Jenkins 동작 | 인프라 변경 |
 | --- | --- | --- |
-| `develop` | 테스트·빌드·Trivy·GHCR push → staging 배포·digest·Pod·API 검증 → 검증 태그 발행 | `main`의 `k8s/portal/overlays/staging/kustomization.yaml` |
-| `main` | 새 빌드 없이 같은 내용의 검증 완료 GHCR 이미지 조회 | `main`의 `k8s/portal/overlays/prod/kustomization.yaml` |
+| `develop` | 테스트·빌드·Trivy·GHCR push → staging 매니페스트 갱신 → 승격용 태그 발행 | `main`의 `k8s/portal/overlays/staging/kustomization.yaml` |
+| `main` | 새 빌드 없이 같은 내용의 GHCR 이미지 조회 | `main`의 `k8s/portal/overlays/prod/kustomization.yaml` |
 | 그 외 | 중단 | 없음 |
 
 staging 태그 갱신은 자동입니다. staging 동기화·서비스 검증 후 사람이 백엔드 `develop → main` CR을
@@ -140,10 +140,12 @@ staging 태그 갱신은 자동입니다. staging 동기화·서비스 검증 �
 백엔드 main 브랜치의 CR 승인·직접 push 차단 규칙은 collabops에서 설정해야 합니다.
 
 배포 참조는 `newTag` 대신 불변 `digest: sha256:...`를 사용합니다. GHCR에는 빌드별 태그와
-내용 해시 기반 `verified-tree-<해시>` 태그를 사용합니다. 검증 태그는 staging의 실제 배포·동일 digest·
-Ready Pod 및 백엔드 헬스·로그인·사용자/데스크톱 조회·로그아웃 검증 성공 후 같은 digest로 발행합니다.
-main 내용에 대응하는 검증 태그가 없으면 prod 변경 전에 실패하며, 이전 `tree-<해시>` 태그로 대체하지 않습니다.
-이 검증은 기본 API 스모크이며 OpenStack VM 생성·RDP 접속·삭제 E2E는 별도입니다.
+내용 해시 기반 `tree-<해시>` 태그를 사용합니다. staging 매니페스트 갱신 후 같은 digest로
+승격용 태그를 발행합니다. 이 태그는 실제 배포·API 검증 통과의 증거가 아닙니다.
+Jenkins는 Argo CD 상태·Pod·API를 조회하지 않습니다. 담당자가 Argo CD 배포 결과와 기능을
+확인한 뒤 동일 내용의 develop → main CR을 승인해야 합니다.
+main 내용에 대응하는 태그가 없으면 prod 변경 전에 실패합니다.
+새 Jenkinsfile이 main에 병합되어야 main도 tree 태그 조회 방식을 사용합니다.
 
 인프라 저장소의 `ci/update-image.sh`를 호출하며 staging·prod 모두 collabops 원본 `main`에
 직접 반영합니다. GitHub 미러에는 쓰지 않습니다. Kustomize와 `co` 인증은 필요하지 않습니다.
