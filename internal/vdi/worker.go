@@ -119,6 +119,9 @@ func (w *Worker) Tick(ctx context.Context) error {
 			if resultErr != nil {
 				return resultErr
 			}
+			if createErr != nil {
+				observeDesktopEvent("DESKTOP_CREATE_FAILED", d, now)
+			}
 			original = d.Revision
 		} else {
 			d.Failure = &Failure{"OPENSTACK_CREATE_FAILED", "VM 생성 결과를 확인 중입니다.", true}

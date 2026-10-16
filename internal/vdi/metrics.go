@@ -34,6 +34,10 @@ func init() {
 	for _, a := range []string{"create", "assign"} {
 		createRequestsTotal.WithLabelValues(a)
 	}
+	// increase() uses a series' first sample as its baseline, so a code first seen at 1 is never counted.
+	for _, c := range []string{"OPENSTACK_CREATE_FAILED", "RDP_READY_TIMEOUT", "UNKNOWN"} {
+		createFailuresTotal.WithLabelValues(c)
+	}
 }
 func result(e error) string {
 	if e != nil {
