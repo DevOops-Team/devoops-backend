@@ -16,7 +16,11 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 def request(url):
     try:
         response = urllib.request.build_opener(NoRedirect).open(
-            urllib.request.Request(url, headers={'Accept':'application/json', 'Cache-Control':'no-cache'}), timeout=10)
+            urllib.request.Request(url, headers={
+                'Accept': 'application/json',
+                'Cache-Control': 'no-cache',
+                'User-Agent': 'Devoops-Jenkins-Healthcheck/1.0',
+            }), timeout=10)
     except urllib.error.HTTPError as error:
         response = error
     with response:
