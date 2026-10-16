@@ -18,6 +18,11 @@ import datetime, json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 class Handler(BaseHTTPRequestHandler):
  def log_message(self, *args): pass
+ def do_GET(self):
+  if self.path not in ('/compute/','/image/'):
+   self.send_error(404); return
+  payload = json.dumps({'versions':[{'id':'v2.0','status':'CURRENT','links':[{'rel':'self','href':'http://cloud:8000'+self.path}]}]}).encode()
+  self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers(); self.wfile.write(payload)
  def do_POST(self):
   if self.path != '/v3/auth/tokens':
    self.send_error(404); return
@@ -42,6 +47,33 @@ for path, expected in [('/healthz',200),('/api/me',401)]:
 
 def docker(*args):
     return subprocess.run(['docker', *args], check=True, capture_output=True, text=True, timeout=120).stdout.strip()
+
+
+def startup_failure(container):
+    try:
+        state = json.loads(docker('inspect', '--format', '{{json .State}}', container))
+        code = state.get('ExitCode')
+        detail = f"exit={code if type(code) is int else 'unknown'}, OOM={state.get('OOMKilled') is True}"
+        reasons = {
+            'invalid OpenStack authentication configuration': 'OpenStack 인증 환경 설정 오류',
+            'OpenStack authentication failed': 'OpenStack 인증 연결 실패',
+            'Nova endpoint unavailable': 'OpenStack Compute 서비스 조회 실패',
+            'Glance endpoint unavailable': 'OpenStack Image 서비스 조회 실패',
+            'MongoDB connection failed': 'MongoDB 연결 실패',
+            'MongoDB bootstrap failed (replica set required)': 'MongoDB 초기화 실패',
+            'bootstrap administrator Secret required': '임시 관리자 설정 누락',
+        }
+        for line in docker('logs', '--tail', '50', container).splitlines():
+            try:
+                event = json.loads(line)
+            except (ValueError, TypeError):
+                continue
+            if event.get('msg') == 'startup failed':
+                detail += ': ' + reasons.get(event.get('reason'), '기타 앱 시작 설정 오류')
+                break
+        return detail
+    except Exception:
+        return '종료 상세 확인 불가'
 
 
 def wait(check, attempts=40, sleep=time.sleep):
@@ -102,7 +134,7 @@ def check_image(env=os.environ):
         consecutive = 0
         for attempt in range(40):
             if docker('inspect', '--format', '{{.State.Running}}', names[0]) != 'true':
-                raise StartupError('새 이미지가 기동 중 종료됐습니다. prod 매니페스트는 변경하지 않습니다')
+                raise StartupError('새 이미지 기동 종료 (' + startup_failure(names[0]) + '). prod 매니페스트는 변경하지 않습니다')
             try:
                 docker('exec', names[2], 'python', '-c', HTTP_CHECK)
                 consecutive += 1
