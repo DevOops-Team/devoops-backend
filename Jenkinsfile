@@ -14,7 +14,7 @@ pipeline {
         IMAGE_NAME = 'ghcr.io/devoops-team/devoops-backend'
         PROD_HEALTHCHECK_URL = 'https://devoops.site'
         // devoops-manifests는 CollabOps 원본에 쓴다 (GitHub 미러에 쓰면 미러가 깨짐) — ci/update-image.sh
-        INFRA_REPO = 'git@collabops.ai:devoops/devoops-manifests.git'
+        MANIFESTS_REPO = 'git@collabops.ai:devoops/devoops-manifests.git'
         INFRA_SSH_KEY = '/var/jenkins_home/.ssh/id_ed25519_collabops_ci'
         GHCR_CREDENTIALS = 'ghcr-push'
     }
@@ -198,16 +198,17 @@ pipeline {
                         DIGEST="$(cat "$WORKSPACE/.deploy-digest")"
                         case "$DIGEST" in sha256:*) ;; *) echo "digest 없음"; exit 1 ;; esac
                         export GIT_SSH_COMMAND="ssh -i $INFRA_SSH_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
-                        git clone -q --depth 1 -b main "$INFRA_REPO" infra
+                        git clone -q --depth 1 -b main "$MANIFESTS_REPO" manifests
+                        test -f "manifests/overlays/$DEPLOY_ENV/kustomization.yaml"
                         rc=0
-                        bash infra/ci/update-image.sh "$DEPLOY_ENV" "$IMAGE_NAME" "$DIGEST" "jenkins #$BUILD_NUMBER tree-$TREE" || rc=$?
+                        bash manifests/ci/update-image.sh "$DEPLOY_ENV" "$IMAGE_NAME" "$DIGEST" "jenkins #$BUILD_NUMBER tree-$TREE" || rc=$?
                         # 0 = 반영, 3 = 이미 같은 이미지
                         [ "$rc" = 0 ] || [ "$rc" = 3 ]
                         if [ "$DEPLOY_ENV" = staging ]; then
-                            git -C infra fetch -q origin main
-                            REVISION="$(git -C infra rev-parse FETCH_HEAD)"
-                            ACTUAL="$(git -C infra show "$REVISION:overlays/staging/kustomization.yaml" |
-                                awk -v mode=get -v img="$IMAGE_NAME" -f infra/ci/images.awk)"
+                            git -C manifests fetch -q origin main
+                            REVISION="$(git -C manifests rev-parse FETCH_HEAD)"
+                            ACTUAL="$(git -C manifests show "$REVISION:overlays/staging/kustomization.yaml" |
+                                awk -v mode=get -v img="$IMAGE_NAME" -f manifests/ci/images.awk)"
                             [ "$ACTUAL" = "$DIGEST" ] || { echo 'staging 이미지가 다른 변경으로 교체되었습니다'; exit 1; }
                             printf '%s' "$REVISION" > "$WORKSPACE/.staging-infra-revision"
                         fi
