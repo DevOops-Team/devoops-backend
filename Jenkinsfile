@@ -9,6 +9,11 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
+    parameters {
+        string(name: 'PROD_VERIFY_CREDENTIALS', defaultValue: 'k8s-prod-readonly',
+            description: 'vdi-prod Deployment·Rollout·Pod 조회 전용 kubeconfig Secret file')
+    }
+
     environment {
         MONGO_KUBECONFIG_CREDENTIALS = 'k8s-staging-mongo'
         IMAGE_NAME = 'ghcr.io/devoops-team/devoops-backend'
@@ -62,6 +67,7 @@ pipeline {
                     done
                     test -r "$INFRA_SSH_KEY"
                     docker version
+                    kubectl version --client
                 '''
                 script {
                     if (env.DEPLOY_ENV == 'staging') {
@@ -73,6 +79,15 @@ pipeline {
                     mongosh --version
                     trivy --version
                         '''
+                    } else {
+                        // Check credential/access before changing the production manifest.
+                        withCredentials([file(credentialsId: params.PROD_VERIFY_CREDENTIALS, variable: 'KUBECONFIG')]) {
+                            sh '''
+                                set -eu
+                                kubectl --request-timeout=10s -n vdi-prod get deployment/backend -o name
+                                kubectl --request-timeout=10s -n vdi-prod get pods -l app=backend -o name
+                            '''
+                        }
                     }
                 }
             }
@@ -92,6 +107,7 @@ pipeline {
                 script { env.LAST_STAGE = env.STAGE_NAME }
                 sh 'make test'
                 sh 'python3 scripts/test-main-health.py'
+                sh 'python3 scripts/test-prod-deployment.py'
             }
         }
 
@@ -221,8 +237,10 @@ pipeline {
             when { expression { env.DEPLOY_ENV == 'prod' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
-                timeout(time: 12, unit: 'MINUTES') {
-                    sh 'python3 scripts/check-prod-health.py'
+                timeout(time: 45, unit: 'MINUTES') {
+                    withCredentials([file(credentialsId: params.PROD_VERIFY_CREDENTIALS, variable: 'KUBECONFIG')]) {
+                        sh 'python3 scripts/check-prod-health.py'
+                    }
                 }
             }
         }
@@ -256,7 +274,7 @@ pipeline {
             script {
                 echo env.DEPLOY_ENV == 'staging' ?
                     '이미지 기동 검사·staging 매니페스트 갱신·승격용 태그 발행 완료. 실제 배포·기능은 사람이 확인한 후 main에 머지하세요.' :
-                    'prod 매니페스트 갱신·운영 HTTP 확인 성공. 새 digest의 배포 완료는 Argo CD에서 별도 확인하세요.'
+                    '목표 digest의 prod 배포 완료·전체 Pod Ready·운영 HTTP 확인 성공.'
             }
         }
         always {

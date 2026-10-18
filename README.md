@@ -132,7 +132,7 @@ staging 확인과 main 승격 절차는
 | 백엔드 브랜치 | Jenkins 동작 | 인프라 변경 |
 | --- | --- | --- |
 | `develop` | 테스트·빌드·Trivy·GHCR push → 격리 기동 검사 → staging 매니페스트 갱신 → 승격용 태그 발행 | `main`의 `overlays/staging/kustomization.yaml` |
-| `main` | 기존 이미지 조회 → prod 매니페스트 갱신 → 운영 HTTP 확인 | `main`의 `overlays/prod/kustomization.yaml` |
+| `main` | 기존 이미지 조회 → prod 매니페스트 갱신 → 목표 digest 배포 완료 → 운영 HTTP 확인 | `main`의 `overlays/prod/kustomization.yaml` |
 | 그 외 | 중단 | 없음 |
 
 staging 태그 갱신은 자동입니다. staging 동기화·서비스 검증 후 사람이 백엔드 `develop → main` CR을
@@ -142,12 +142,12 @@ staging 태그 갱신은 자동입니다. staging 동기화·서비스 검증 �
 배포 참조는 `newTag` 대신 불변 `digest: sha256:...`를 사용합니다. GHCR에는 빌드별 태그와
 내용 해시 기반 `tree-<해시>` 태그를 사용합니다. staging 매니페스트 갱신 후 같은 digest로
 승격용 태그를 발행합니다. 이 태그는 실제 배포·API 검증 통과의 증거가 아닙니다.
-Jenkins는 Argo CD 상태·Pod를 조회하지 않습니다. develop에서는 임시 환경의 새 이미지 기동을, main에서는
-배포 지시 후 운영 HTTP 응답을 검사합니다. 담당자가 Argo CD 배포 결과와 기능을
+develop에서는 임시 환경의 이미지 기동을 검사합니다. main에서는 운영 클러스터를 읽기 전용으로 조회해
+목표 digest의 Deployment/Rollout과 전체 backend Pod 준비 완료를 확인한 뒤 운영 HTTP 응답을 검사합니다. 담당자가 Argo CD 배포 결과와 기능을
 확인한 뒤 동일 내용의 develop → main CR을 승인해야 합니다.
 main 내용에 대응하는 태그가 없으면 prod 변경 전에 실패합니다.
 새 Jenkinsfile이 main에 병합되어야 main도 tree 태그 조회·운영 HTTP 검사 방식을 사용합니다.
-운영 HTTP 응답만으로 새 digest의 배포 완료를 증명하지는 않습니다.
+운영 HTTP 응답만으로 성공 처리하지 않으며, 배포 대기·HTTP 검사 실패 시 자동 롤백하지 않습니다.
 
 인프라 저장소의 `ci/update-image.sh`를 호출하며 staging·prod 모두 collabops 원본 `main`에
 직접 반영합니다. GitHub 미러에는 쓰지 않습니다. Kustomize와 `co` 인증은 필요하지 않습니다.
