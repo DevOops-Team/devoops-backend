@@ -3,7 +3,7 @@
 ## Jenkins 흐름
 
 - develop: 정적·단위·Mongo 통합 테스트 → 이미지 빌드 → Trivy → GHCR 업로드 → 격리 기동 검사 → staging digest 갱신 → release.json 보관.
-- main: PROMOTE_DIGEST에 지정한 이미지를 digest로 직접 pull → 이미지 소스와 main 비교 → prod 매니페스트 갱신 → 배포 완료 대기 → 운영 HTTP 확인.
+- main: CollabOps manifests main의 staging digest 자동 조회 → digest로 직접 pull → 이미지 소스와 main 비교 → prod 매니페스트 갱신 → 배포 완료 대기 → 운영 HTTP 확인.
 
 승격용 tree 태그 발행·조회 단계는 없다. 빌드 태그는 이력 추적용으로 유지한다.
 이미지에는 `org.opencontainers.image.revision`(빌드 소스 커밋), `io.devoops.source-tree`(전체 파일 내용 해시)를 기록한다.
@@ -14,24 +14,24 @@ main에서는 source-tree 라벨이 현재 main의 전체 tree 해시와 같아�
 1. 이 Jenkinsfile로 develop을 빌드한다. 성공한 빌드의 Artifacts에서 `release.json`을 확인한다.
 2. 기록된 image·digest·source_commit·source_tree·staging_manifest_revision을 확인하고, 해당 digest의 staging 배포·로그인·핵심 기능을 검증한다.
 3. 동일한 소스 내용의 develop → main 릴리스 CR을 승인·머지한다.
-4. main 잡의 **Build with Parameters**에서 `PROMOTE_DIGEST`에 검증한 `release.json`의 digest 전체 값(`sha256:` 포함)을 입력한다.
+4. 머지 웹훅으로 main 잡이 실행되면 staging 매니페스트에서 백엔드 digest를 자동 조회한다. 수동 입력은 없다.
 5. main의 이미지 조회·소스 일치·prod 배포 완료·HTTP 결과를 확인한다.
 
 `release.json`은 staging 매니페스트 갱신과 원격 digest 일치 확인이 성공한 뒤에만 생성·보관한다.
 기록 파일에는 image, digest, source_commit, source_tree, staging_manifest_revision, build_number가 들어간다.
 릴리스 기록 생성 자체가 실제 staging 배포·기능 검증 성공을 뜻하지 않는다. 실제 확인은 담당자가 수행한다.
-다음 develop 빌드가 staging을 바꿔도 승인한 release.json의 digest를 명시적으로 선택하므로 최신 staging 값으로 자동 교체되지 않는다.
+main 이미지 조회 단계에서 staging 매니페스트를 한 번 읽어 digest를 고정한다. 이후 staging이 바뀌어도 해당 실행의 digest는 바뀌지 않는다. 조회 시점에 이미 staging이 다음 develop 소스로 바뀌었다면 main과 이미지 소스 비교에서 중단한다.
 기존 manifests `ci/update-image.sh`의 staging 이력 방어는 유지한다.
 
 ## Jenkins 사용 변경과 전환
 
-- main 자동 webhook 실행은 PROMOTE_DIGEST가 비어 있으면 소스 단계에서 실패하고 prod를 변경하지 않는다. 운영 승격은 digest를 입력한 파라미터 빌드로 실행한다.
-- develop 빌드에는 PROMOTE_DIGEST가 필요 없다.
+- main 웹훅 실행은 staging 매니페스트 digest를 자동 사용한다. PROMOTE_DIGEST 파라미터는 제거했다.
+- 조회 실패·잘못된 digest·소스 불일치는 prod 변경 전에 중단한다.
 - 운영 조회 Credential 파라미터 PROD_VERIFY_CREDENTIALS는 기존대로 유지한다.
 - 과거 라벨 없는 이미지는 새 소스 일치 검증에 통과하지 못한다. 변경 후 develop을 새로 빌드·검증한 릴리스를 사용한다.
 - main의 소스가 선택한 이미지와 다르면 실패한다. merge commit SHA가 달라도 파일 내용이 같으면 전체 tree 해시는 같으므로 정상 승격할 수 있다.
 - 실패한 main 빌드를 무조건 재실행하지 않는다. 승인한 digest와 현재 prod 상태를 먼저 확인한다. 자동 롤백은 하지 않는다.
-- 이번 변경은 백엔드 develop 코드 변경이며 main 병합·실제 Jenkins 파라미터 빌드·클러스터 검증은 별도다.
+- 이번 변경은 백엔드 develop 코드 변경이며 main 병합·실제 Jenkins 자동 빌드·클러스터 검증은 별도다.
 
 ## 검사 범위
 

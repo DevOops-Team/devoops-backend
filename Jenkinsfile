@@ -10,8 +10,6 @@ pipeline {
     }
 
     parameters {
-        string(name: 'PROMOTE_DIGEST', defaultValue: '',
-            description: 'main 전용: staging에서 검증한 release.json의 sha256 digest 전체 값. 빈 값이면 운영 배포 중단')
         string(name: 'PROD_VERIFY_CREDENTIALS', defaultValue: 'k8s-prod-readonly',
             description: 'vdi-prod Deployment·Rollout·Pod 조회 전용 kubeconfig Secret file')
     }
@@ -53,10 +51,6 @@ pipeline {
                     env.SOURCE_COMMIT = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
                     env.SOURCE_TREE = sh(script: 'git rev-parse "HEAD^{tree}"', returnStdout: true).trim()
                     env.TREE = env.SOURCE_TREE.substring(0, 12) // 알림용 소스 지문, 이미지 태그가 아님
-                    env.PROMOTE_DIGEST = params.PROMOTE_DIGEST?.trim() ?: ''
-                    if (env.DEPLOY_ENV == 'prod') {
-                        sh 'python3 scripts/image-release.py prepare-prod'
-                    }
                     env.IMAGE_TAG = "${env.BUILD_NUMBER}-${commit}"
                     currentBuild.description = "${branch} → ${env.DEPLOY_ENV} (tree ${env.TREE})"
                 }
@@ -184,6 +178,15 @@ pipeline {
             when { expression { env.DEPLOY_ENV == 'prod' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
+                dir('promotion-manifests') {
+                    deleteDir()
+                    sh '''
+                        set -eu
+                        export GIT_SSH_COMMAND="ssh -i $INFRA_SSH_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+                        git clone -q --depth 1 -b main "$MANIFESTS_REPO" .
+                    '''
+                }
+                sh 'python3 scripts/image-release.py prepare-prod'
                 withCredentials([usernamePassword(credentialsId: env.GHCR_CREDENTIALS,
                     usernameVariable: 'GHCR_USERNAME', passwordVariable: 'GHCR_TOKEN')]) {
                     sh '''
@@ -259,7 +262,7 @@ pipeline {
         success {
             script {
                 echo env.DEPLOY_ENV == 'staging' ?
-                    '이미지 기동 검사·staging 매니페스트 갱신·release.json 기록 완료. staging 검증 후 승인한 digest로 main 배포를 실행하세요.' :
+                    '이미지 기동 검사·staging 매니페스트 갱신·release.json 기록 완료. staging 검증 후 main에 머지하면 digest를 자동 조회해 승격합니다.' :
                     '목표 digest의 prod 배포 완료·전체 Pod Ready·운영 HTTP 확인 성공.'
             }
         }
