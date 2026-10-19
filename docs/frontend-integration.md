@@ -38,7 +38,7 @@ FRONTEND_INTEGRATION_DIR="$PWD/../frontend" \
 make test-integration
 ```
 
-`TestFrontendIntegration`은 전용 Go HTTP 서버·작업자와 Next.js 프로덕션 서버를 시작하고, `scripts/test-frontend.cjs`에서 실제 `frontend/lib/vdi/api.ts`를 실행한다. sessionStorage와 리다이렉트는 Node 검사 환경에서 대체하고 실제 MongoDB 및 HTTP 요청을 사용한다. 테스트마다 고유 DB를 만들고 종료 시 DB와 서버를 정리한다. OpenStack·RDP 준비 상태는 기존 `testinfra`로 대체한다. 해당 테스트는 `FRONTEND_INTEGRATION_DIR`가 없으면 skip한다.
+`TestIntegrationFrontendIntegration`은 전용 Go HTTP 서버·작업자와 Next.js 프로덕션 서버를 시작하고, `scripts/test-frontend.cjs`에서 실제 `frontend/lib/vdi/api.ts`를 실행한다. sessionStorage와 리다이렉트는 Node 검사 환경에서 대체하고 실제 MongoDB 및 HTTP 요청을 사용한다. 테스트마다 고유 DB를 만들고 종료 시 DB와 서버를 정리한다. OpenStack·RDP 준비 상태는 기존 `testinfra`로 대체한다. 해당 테스트는 `FRONTEND_INTEGRATION_DIR`가 없으면 skip한다.
 
 ## 검증 결과 (2026-10-05~06)
 
