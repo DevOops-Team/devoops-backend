@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -25,8 +26,22 @@ def kubectl(resource, optional=False):
         # A rolling-only cluster need not have the Argo Rollouts CRD installed.
         if optional and "doesn't have a resource type" in result.stderr:
             return None
+        if 'Forbidden' in result.stderr:
+            raise DeploymentError('운영 조회 권한 없음: kubeconfig 계정의 vdi-prod RBAC를 확인하세요')
+        if 'Unauthorized' in result.stderr:
+            raise DeploymentError('운영 Kubernetes 인증 실패: kubeconfig 인증 정보·만료를 확인하세요')
         raise DeploymentError('운영 Kubernetes 조회 실패: 권한·연결을 확인하세요')
     return json.loads(result.stdout) if result.stdout.strip() else None
+
+
+def check_access(env=os.environ):
+    if env.get('SOURCE_BRANCH') != 'main' or env.get('DEPLOY_ENV') != 'prod' or not env.get('KUBECONFIG'):
+        raise DeploymentError('main → prod의 KUBECONFIG 조회 검사만 허용합니다')
+    if not kubectl('deployment/backend'):
+        raise DeploymentError('vdi-prod의 backend Deployment가 없습니다')
+    kubectl('pods')
+    kubectl('rollouts.argoproj.io/backend', optional=True)
+    print('운영 Deployment·Pod·Rollout 조회 권한 확인 완료', flush=True)
 
 
 def deployment_ready(deployment, rollout, pods, image):
@@ -162,7 +177,14 @@ def main(env=os.environ):
 
 if __name__ == '__main__':
     try:
-        main()
-    except Exception:
-        print('운영 백엔드 HTTP 검사 실패. Argo CD·운영 접근 경로를 확인하세요. 자동 롤백하지 않습니다.', flush=True)
+        if sys.argv[1:] == ['--check-access']:
+            check_access()
+        elif not sys.argv[1:]:
+            main()
+        else:
+            raise ValueError('지원하지 않는 검사 옵션입니다')
+    except Exception as error:
+        if isinstance(error, DeploymentError):
+            print(str(error), flush=True)
+        print('운영 백엔드 검사 실패. Argo CD·운영 접근 경로를 확인하세요. 자동 롤백하지 않습니다.', flush=True)
         raise SystemExit(1)

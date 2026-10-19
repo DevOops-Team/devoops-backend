@@ -109,6 +109,33 @@ class DeploymentTests(unittest.TestCase):
         with patch.object(prod.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '', '')):
             self.assertIsNone(prod.kubectl('rollouts.argoproj.io/backend', optional=True))
 
+    def test_access_preflight_reads_all_resources_without_deploy_digest(self):
+        env = dict(SOURCE_BRANCH='main', DEPLOY_ENV='prod', KUBECONFIG='/test/config')
+        with patch.object(prod, 'kubectl', side_effect=[{'metadata': {'name': 'backend'}}, {}, None]) as get:
+            prod.check_access(env)
+            self.assertEqual(get.call_args_list, [
+                unittest.mock.call('deployment/backend'), unittest.mock.call('pods'),
+                unittest.mock.call('rollouts.argoproj.io/backend', optional=True)])
+        for invalid in ({}, dict(env, SOURCE_BRANCH='develop'), dict(env, DEPLOY_ENV='staging')):
+            with patch.object(prod, 'kubectl') as get:
+                with self.assertRaises(prod.DeploymentError): prod.check_access(invalid)
+                get.assert_not_called()
+        with patch.object(prod, 'kubectl', return_value=None):
+            with self.assertRaises(prod.DeploymentError): prod.check_access(env)
+        for failing_index in range(3):
+            responses = [{'metadata': {'name': 'backend'}}, {}, None]
+            responses[failing_index] = prod.DeploymentError('denied')
+            with patch.object(prod, 'kubectl', side_effect=responses):
+                with self.assertRaises(prod.DeploymentError): prod.check_access(env)
+
+    def test_pipeline_uses_existing_credential_and_preflights_before_manifest_update(self):
+        text = Path(__file__).parent.parent.joinpath('Jenkinsfile').read_text()
+        self.assertIn("PROD_VERIFY_CREDENTIALS = 'k8s-staging-mongo'", text)
+        self.assertNotIn('params.PROD_VERIFY_CREDENTIALS', text)
+        self.assertNotIn('k8s-prod-readonly', text)
+        self.assertLess(text.index('--check-access'), text.index("stage('매니페스트 갱신"))
+        self.assertEqual(text.count('credentialsId: env.PROD_VERIFY_CREDENTIALS'), 2)
+
     def test_main_gates_http_on_deployment_and_rechecks_each_sample(self):
         with tempfile.TemporaryDirectory() as root:
             Path(root, '.deploy-digest').write_text('sha256:'+'a'*64)

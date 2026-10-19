@@ -27,7 +27,7 @@ main 이미지 조회 단계에서 staging 매니페스트를 한 번 읽어 dig
 
 - main 웹훅 실행은 staging 매니페스트 digest를 자동 사용한다. PROMOTE_DIGEST 파라미터는 제거했다.
 - 조회 실패·잘못된 digest·소스 불일치는 prod 변경 전에 중단한다.
-- 운영 조회 Credential 파라미터 PROD_VERIFY_CREDENTIALS는 기존대로 유지한다.
+- 운영 조회에는 기존 Secret file `k8s-staging-mongo`를 사용한다. main 도구 확인 단계에서 실제 prod 조회 권한을 검사한다.
 - 과거 라벨 없는 이미지는 새 소스 일치 검증에 통과하지 못한다. 변경 후 develop을 새로 빌드·검증한 릴리스를 사용한다.
 - main의 소스가 선택한 이미지와 다르면 실패한다. merge commit SHA가 달라도 파일 내용이 같으면 전체 tree 해시는 같으므로 정상 승격할 수 있다.
 - 실패한 main 빌드를 무조건 재실행하지 않는다. 승인한 digest와 현재 prod 상태를 먼저 확인한다. 자동 롤백은 하지 않는다.
@@ -72,10 +72,11 @@ HTTP 3회 확인 때마다 배포 상태도 다시 확인한다. 외부 API는 �
 
 ### 운영 조회 Credential 설정
 
-Jenkins Secret file에 운영 읽기 전용 kubeconfig를 등록한다. 기본 ID는 `k8s-prod-readonly`이며
-잡 파라미터 `PROD_VERIFY_CREDENTIALS`로 기존 ID를 선택할 수 있다. staging Mongo용
-Credential은 재사용하지 않는다. main의 도구 확인 단계에서 Credential과 Deployment·Pod
-조회가 가능한지 먼저 검사하므로 누락 시 prod 매니페스트 변경 전에 실패한다.
+기존 Jenkins Secret file `k8s-staging-mongo`를 사용한다. 이름과 무관하게 실제 kubeconfig 계정에
+운영 조회 권한이 있어야 한다. main의 도구 확인 단계에서 Deployment·Pod·기존 Rollout 조회를
+실제로 실행하며, 권한·인증·연결 오류이면 prod 매니페스트 변경 전에 중단한다.
+Credential ID는 Jenkinsfile의 `PROD_VERIFY_CREDENTIALS` 환경변수에서 지정하며,
+이전 잡에 남은 파라미터 값은 사용하지 않는다. 이 코드 변경으로 Kubernetes 권한이 부여되지는 않는다.
 
 필요 권한은 운영 클러스터 `vdi-prod` 네임스페이스에 한정한다.
 

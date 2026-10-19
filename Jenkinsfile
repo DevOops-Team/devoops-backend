@@ -9,12 +9,8 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
-    parameters {
-        string(name: 'PROD_VERIFY_CREDENTIALS', defaultValue: 'k8s-prod-readonly',
-            description: 'vdi-prod Deployment·Rollout·Pod 조회 전용 kubeconfig Secret file')
-    }
-
     environment {
+        PROD_VERIFY_CREDENTIALS = 'k8s-staging-mongo'
         IMAGE_NAME = 'ghcr.io/devoops-team/devoops-backend'
         PROD_HEALTHCHECK_URL = 'https://devoops.site'
         // devoops-manifests는 CollabOps 원본에 쓴다 (GitHub 미러에 쓰면 미러가 깨짐) — ci/update-image.sh
@@ -79,11 +75,10 @@ pipeline {
                         '''
                     } else {
                         // Check credential/access before changing the production manifest.
-                        withCredentials([file(credentialsId: params.PROD_VERIFY_CREDENTIALS, variable: 'KUBECONFIG')]) {
+                        withCredentials([file(credentialsId: env.PROD_VERIFY_CREDENTIALS, variable: 'KUBECONFIG')]) {
                             sh '''
                                 set -eu
-                                kubectl --request-timeout=10s -n vdi-prod get deployment/backend -o name
-                                kubectl --request-timeout=10s -n vdi-prod get pods -l app=backend -o name
+                                python3 scripts/check-prod-health.py --check-access
                             '''
                         }
                     }
@@ -249,7 +244,7 @@ pipeline {
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
                 timeout(time: 45, unit: 'MINUTES') {
-                    withCredentials([file(credentialsId: params.PROD_VERIFY_CREDENTIALS, variable: 'KUBECONFIG')]) {
+                    withCredentials([file(credentialsId: env.PROD_VERIFY_CREDENTIALS, variable: 'KUBECONFIG')]) {
                         sh 'python3 scripts/check-prod-health.py'
                     }
                 }
