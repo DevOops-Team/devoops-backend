@@ -17,10 +17,9 @@ def load(name):
 
 
 startup = load('check-image-startup')
-prod = load('check-prod-health')
 
 
-class MainHealthTests(unittest.TestCase):
+class ImageStartupTests(unittest.TestCase):
     def test_startup_uses_digest_isolation_and_always_cleans(self):
         for broken in (False, True):
             with self.subTest(broken=broken), tempfile.TemporaryDirectory() as root:
@@ -88,45 +87,16 @@ class MainHealthTests(unittest.TestCase):
             startup.wait(lambda: (_ for _ in ()).throw(subprocess.CalledProcessError(1,'docker')),
                          attempts=2,sleep=lambda _:None)
 
-    def test_public_http_validates_status_json_and_auth_error(self):
-        calls=[]
-        def get(url):
-            calls.append(url)
-            return 401,'application/json',{'code':'UNAUTHORIZED'}
-        prod.check_once('https://example.test',get)
-        self.assertEqual(calls,['https://example.test/backend/api/me','https://example.test/backend/api/desktops'])
-        for response in [(200,'application/json',{}),(401,'text/html',{}),(401,'application/json',{'code':'OTHER'})]:
-            with self.subTest(response=response), self.assertRaises(ValueError):
-                prod.check_once('https://example.test',lambda _:response)
-
-    def test_http_needs_three_consecutive_successes(self):
-        outcomes=iter([True,True,False,True,True,True])
-        calls=[]
-        def check(_):
-            calls.append(1)
-            if not next(outcomes):raise ValueError('private response')
-        prod.wait_healthy('https://example.test',check=check,sleep=lambda _:None,attempts=6)
-        self.assertEqual(len(calls),6)
-        with self.assertRaises(RuntimeError):
-            prod.wait_healthy('https://example.test',check=lambda _:(_ for _ in ()).throw(ValueError()),
-                              sleep=lambda _:None,attempts=2)
-
-    def test_prod_branch_and_url_guards(self):
-        for env in [dict(SOURCE_BRANCH='develop',DEPLOY_ENV='staging'),
-                    dict(SOURCE_BRANCH='main',DEPLOY_ENV='prod',PROD_HEALTHCHECK_URL='http://example.test'),
-                    dict(SOURCE_BRANCH='main',DEPLOY_ENV='prod',PROD_HEALTHCHECK_URL='https://user:password@example.test')]:
-            with patch.object(prod,'wait_healthy') as wait:
-                with self.assertRaises(ValueError): prod.main(env)
-                wait.assert_not_called()
-
-    def test_pipeline_orders_pre_and_post_deploy_checks(self):
+    def test_pipeline_stops_at_manifest_update_without_cluster_access(self):
         text=Path(__file__).parent.parent.joinpath('Jenkinsfile').read_text()
-        stages=['이미지 업로드 [develop]','이미지 기동 검사 [develop]','이미지 조회 [main]','매니페스트 갱신 [develop·main]','운영 HTTP 확인 [main]']
+        stages=['이미지 업로드 [develop]','이미지 기동 검사 [develop]','이미지 조회 [main]','매니페스트 갱신 [develop·main]']
         positions=[text.index("stage('"+name+"')") for name in stages]
         self.assertEqual(positions,sorted(positions))
-        for name, target in (('이미지 기동 검사 [develop]', 'staging'), ('운영 HTTP 확인 [main]', 'prod')):
-            section=text.split("stage('"+name+"')",1)[1].split("stage('",1)[0]
-            self.assertIn(f"env.DEPLOY_ENV == '{target}'",section)
+        startup_stage=text.split("stage('이미지 기동 검사 [develop]')",1)[1].split("stage('",1)[0]
+        self.assertIn("env.DEPLOY_ENV == 'staging'",startup_stage)
+        for removed in ('kubectl', 'KUBECONFIG', 'PROD_VERIFY_CREDENTIALS', 'check-prod-health', '운영 HTTP 확인 [main]'):
+            self.assertNotIn(removed,text)
+        self.assertIn('실제 배포 상태는 Argo CD에서 확인',text)
 
 
 if __name__=='__main__': unittest.main()
