@@ -30,12 +30,13 @@ type App struct {
 	Cloud     Cloud
 	Guacamole *guacamole.Issuer
 	Now       func() time.Time
+	catalog   specCache
 	dummyHash []byte
 }
 
 func NewApp(s *Store, c Cloud, g *guacamole.Issuer) *App {
 	h, _ := bcrypt.GenerateFromPassword([]byte("not-a-real-password"), bcrypt.DefaultCost)
-	return &App{s, c, g, time.Now, h}
+	return &App{Store: s, Cloud: c, Guacamole: g, Now: time.Now, dummyHash: h}
 }
 func tokenHash(t string) string { v := sha256.Sum256([]byte(t)); return hex.EncodeToString(v[:]) }
 func bearer(r *http.Request) string {
@@ -327,7 +328,7 @@ func (a *App) images(w http.ResponseWriter, r *http.Request, _ User) error {
 	}
 	out := []OS{}
 	for _, im := range list {
-		_, e := a.Cloud.Spec(r.Context(), im.ImageID)
+		_, e := a.catalogSpec(r.Context(), im.ImageID)
 		if e == nil {
 			out = append(out, im)
 		} else if !errors.Is(e, ErrOSUnavailable) && !errors.Is(e, ErrSpecUnavailable) {
@@ -356,7 +357,7 @@ func (a *App) imageSpec(w http.ResponseWriter, r *http.Request, _ User) error {
 	if e != nil {
 		return e
 	}
-	spec, e := a.Cloud.Spec(r.Context(), im.ImageID)
+	spec, e := a.catalogSpec(r.Context(), im.ImageID)
 	if e != nil {
 		return e
 	}

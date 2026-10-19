@@ -14,6 +14,27 @@ import (
 	"time"
 )
 
+// Catalog reads may be briefly stale, but create must always validate live.
+func TestCatalogCacheDoesNotBypassCreateValidation(t *testing.T) {
+	f := setup(t)
+	path := fmt.Sprintf("/api/images/%d/spec", f.osID)
+	first := f.request("GET", path, f.admin, nil, "", 200)
+	f.cloud.Set(func(s *testinfra.OpenStack) { s.RAM = 2048 })
+	cached := f.request("GET", path, f.admin, nil, "", 200)
+	if cached["memoryGb"] != first["memoryGb"] {
+		t.Fatal("catalog cache not used", cached)
+	}
+	f.request("POST", "/api/desktops", f.admin, f.body(), "9d03bf64-6591-490c-9ff3-2175cefd2a10", 400)
+	f.now = f.now.Add(31 * time.Second)
+	fresh := f.request("GET", path, f.admin, nil, "", 200)
+	if fresh["memoryGb"] != float64(2) {
+		t.Fatal("catalog did not refresh", fresh)
+	}
+	body := f.body()
+	body["memoryGb"] = 2
+	f.request("POST", "/api/desktops", f.admin, body, "04359ceb-c811-4c94-8225-1cb235b4be00", 202)
+}
+
 func TestImageSpecForCreateForm(t *testing.T) {
 	f := setup(t)
 	path := fmt.Sprintf("/api/images/%d/spec", f.osID)
@@ -28,6 +49,8 @@ func TestImageSpecForCreateForm(t *testing.T) {
 	f.request("GET", "/api/images/invalid/spec", f.admin, nil, "", 400)
 	f.request("GET", "/api/images/9007199254740991/spec", f.admin, nil, "", 404)
 	f.request("GET", path+"?extra=1", f.admin, nil, "", 400)
+	// Availability changes are observed after the catalog TTL.
+	f.now = f.now.Add(31 * time.Second)
 	f.cloud.Set(func(s *testinfra.OpenStack) { s.RAM = 512 })
 	f.request("GET", path, f.admin, nil, "", 409)
 	f.cloud.Set(func(s *testinfra.OpenStack) { s.RAM = 1024; s.ImageStatus = "queued" })
