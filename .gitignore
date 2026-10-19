@@ -6,3 +6,4 @@
 .deploy-digest
 .staging-infra-revision
 .staging-verified
+/release.json

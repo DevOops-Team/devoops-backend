@@ -131,25 +131,28 @@ staging 확인과 main 승격 절차는
 
 | 백엔드 브랜치 | Jenkins 동작 | 인프라 변경 |
 | --- | --- | --- |
-| `develop` | 테스트·빌드·Trivy·GHCR push → 격리 기동 검사 → staging 매니페스트 갱신 → 승격용 태그 발행 | `main`의 `overlays/staging/kustomization.yaml` |
-| `main` | 기존 이미지 조회 → prod 매니페스트 갱신 → 목표 digest 배포 완료 → 운영 HTTP 확인 | `main`의 `overlays/prod/kustomization.yaml` |
+| `develop` | 테스트·빌드·Trivy·GHCR push → 격리 기동 검사 → staging 매니페스트 갱신 → release.json 보관 | `main`의 `overlays/staging/kustomization.yaml` |
+| `main` | 승인한 digest 직접 조회·소스 확인 → prod 매니페스트 갱신 → 목표 digest 배포 완료 → 운영 HTTP 확인 | `main`의 `overlays/prod/kustomization.yaml` |
 | 그 외 | 중단 | 없음 |
 
-staging 태그 갱신은 자동입니다. staging 동기화·서비스 검증 후 사람이 백엔드 `develop → main` CR을
-승인·머지하면 동일 이미지가 prod로 승격됩니다. 별도의 인프라 prod CR은 생성하지 않습니다.
-백엔드 main 브랜치의 CR 승인·직접 push 차단 규칙은 collabops에서 설정해야 합니다.
+develop은 staging 매니페스트를 자동 갱신하고 빌드 아티팩트로 `release.json`과 `.deploy-digest`를 보관합니다.
+staging에서 해당 digest의 배포·기능을 확인한 뒤 같은 내용의 develop → main CR을 승인·머지합니다.
+main은 **Build with Parameters**에서 승인한 `release.json`의 `digest`를 `PROMOTE_DIGEST`에 넣어 실행합니다.
+빈 값·잘못된 digest는 prod 변경 전에 실패합니다. main 머지 webhook의 기본 실행도 이 값이 없으면 배포하지 않습니다.
 
-배포 참조는 `newTag` 대신 불변 `digest: sha256:...`를 사용합니다. GHCR에는 빌드별 태그와
-내용 해시 기반 `tree-<해시>` 태그를 사용합니다. staging 매니페스트 갱신 후 같은 digest로
-승격용 태그를 발행합니다. 이 태그는 실제 배포·API 검증 통과의 증거가 아닙니다.
-develop에서는 임시 환경의 이미지 기동을 검사합니다. main에서는 운영 클러스터를 읽기 전용으로 조회해
-목표 digest의 Deployment/Rollout과 전체 backend Pod 준비 완료를 확인한 뒤 운영 HTTP 응답을 검사합니다. 담당자가 Argo CD 배포 결과와 기능을
-확인한 뒤 동일 내용의 develop → main CR을 승인해야 합니다.
-main 내용에 대응하는 태그가 없으면 prod 변경 전에 실패합니다.
-새 Jenkinsfile이 main에 병합되어야 main도 tree 태그 조회·운영 HTTP 검사 방식을 사용합니다.
-운영 HTTP 응답만으로 성공 처리하지 않으며, 배포 대기·HTTP 검사 실패 시 자동 롤백하지 않습니다.
+GHCR에는 빌드 이력용 `<빌드번호>-<커밋 앞 12자>` 태그만 발행하며 승격용 `tree-*` 태그는 발행·조회하지 않습니다.
+main은 `이미지@sha256:...`로 정확한 이미지를 가져온 뒤 이미지의 `io.devoops.source-tree` 라벨이
+main의 전체 소스 tree 해시와 같은지 확인합니다. 소스 지문은 메타데이터이며 이미지 태그가 아닙니다.
+다른 소스·라벨 없는 이전 이미지·GHCR에 없는 digest는 prod 매니페스트 갱신 전에 실패합니다.
+기존 staging 이력 방어도 유지합니다. manifests의 `ci/update-image.sh`가 staging 이력에 없는 digest의 prod 반영을 거부합니다.
+현재 staging의 최신 digest를 자동으로 복사하지 않으므로 다음 develop 배포와 운영 승격을 구분할 수 있습니다.
 
-인프라 저장소의 `ci/update-image.sh`를 호출하며 staging·prod 모두 collabops 원본 `main`에
+main에서는 운영 Deployment/Rollout·Pod를 읽기 전용으로 조회해 목표 digest 배포 완료 후 HTTP를 확인합니다.
+실패 시 자동 롤백하지 않습니다. 운영 조회 Credential 설정은 [백엔드 staging 확인](docs/jenkins-staging-verification.md)을 참고하세요.
+새 흐름은 이 변경으로 develop 릴리스를 만든 뒤 Jenkinsfile을 포함해 main에 병합했을 때 적용됩니다.
+백엔드 main의 CR 승인·직접 push 차단 규칙은 CollabOps에서 설정해야 합니다.
+
+devoops-manifests의 `ci/update-image.sh`를 호출하며 staging·prod 모두 collabops 원본 `main`에
 직접 반영합니다. GitHub 미러에는 쓰지 않습니다. Kustomize와 `co` 인증은 필요하지 않습니다.
 클러스터 직접 배포도 하지 않습니다.
 
