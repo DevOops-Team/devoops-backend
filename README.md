@@ -144,7 +144,7 @@ staging 확인과 main 승격 절차는
 | 백엔드 브랜치 | Jenkins 동작 | 인프라 변경 |
 | --- | --- | --- |
 | `develop` | 테스트·빌드·Trivy·GHCR push → 격리 기동 검사 → staging 매니페스트 갱신 → release.json 보관 | `main`의 `overlays/staging/kustomization.yaml` |
-| `main` | staging digest 자동 조회·소스 확인 → prod 매니페스트 갱신 → 목표 digest 배포 완료 → 운영 HTTP 확인 | `main`의 `overlays/prod/kustomization.yaml` |
+| `main` | staging digest 자동 조회·소스 확인 → prod 매니페스트 갱신 | `main`의 `overlays/prod/kustomization.yaml` |
 | 그 외 | 중단 | 없음 |
 
 develop은 staging 매니페스트를 자동 갱신하고 빌드 아티팩트로 `release.json`과 `.deploy-digest`를 보관합니다.
@@ -160,8 +160,11 @@ main의 전체 소스 tree 해시와 같은지 확인합니다. 소스 지문은
 기존 staging 이력 방어도 유지합니다. manifests의 `ci/update-image.sh`가 staging 이력에 없는 digest의 prod 반영을 거부합니다.
 다음 develop 배포로 staging 이미지가 main과 달라졌다면 소스 검증에서 중단하며, 다른 소스의 이미지를 운영에 반영하지 않습니다.
 
-main에서는 운영 Deployment/Rollout·Pod를 읽기 전용으로 조회해 목표 digest 배포 완료 후 HTTP를 확인합니다.
-실패 시 자동 롤백하지 않습니다. 운영 조회 Credential 설정은 [백엔드 staging 확인](docs/jenkins-staging-verification.md)을 참고하세요.
+Jenkins는 staging·prod 매니페스트 갱신까지 수행하며 Kubernetes API·kubeconfig를 사용하지 않습니다.
+롤링 업데이트와 리소스 준비 상태는 Argo CD·Kubernetes에서 확인합니다. Jenkins 성공은
+매니페스트 갱신 성공을 뜻하며 실제 배포 완료나 기능 정상을 보장하지 않습니다.
+배포된 앱의 로그인·DB 읽기·쓰기 등 기능 검사는 현재 자동화돼 있지 않아 별도로 확인해야 합니다.
+Argo CD 설정과 매니페스트는 이번 변경에서 수정하지 않습니다.
 새 흐름은 이 변경으로 develop 릴리스를 만든 뒤 Jenkinsfile을 포함해 main에 병합했을 때 적용됩니다.
 백엔드 main의 CR 승인·직접 push 차단 규칙은 CollabOps에서 설정해야 합니다.
 

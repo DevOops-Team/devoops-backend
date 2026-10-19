@@ -96,7 +96,8 @@ def payload(env, log="", commit="", now=None, digest="미확정"):
     description = ""
     if status == "SUCCESS":
         lines = [line for line in log.splitlines() if re.search(r"(?:staging|prod) 반영:", line)]
-        field("결과", lines[-1] if lines else "파이프라인 성공. 인프라 반영 상세는 Jenkins 로그를 확인하세요.")
+        field("결과", lines[-1] if lines else "매니페스트 갱신 완료. 상세는 Jenkins 로그를 확인하세요.")
+        field("배포 확인", "실제 배포 상태는 Argo CD에서 확인하세요. 배포된 앱의 기능 검사는 Jenkins에서 자동 실행하지 않습니다.")
     else:
         field("실패·중단 단계", env.get("N_LAST_STAGE", "파이프라인 시작"))
         lines = [line for line in log.splitlines() if line.strip() and "[Pipeline]" not in line]

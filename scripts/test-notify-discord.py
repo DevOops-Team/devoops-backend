@@ -27,6 +27,8 @@ class NotificationTests(unittest.TestCase):
         fields = {f["name"]: f["value"] for f in value["embeds"][0]["fields"]}
         self.assertEqual(fields["완료 알림 시각 (KST)"], "2026-10-15 09:00:00 KST")
         self.assertIn("staging 반영:", fields["결과"])
+        self.assertIn("Argo CD", fields["배포 확인"])
+        self.assertIn("자동 실행하지 않습니다", fields["배포 확인"])
         self.assertIn("sha256:123456789abc", fields["이미지 digest / 내용 해시"])
         self.assertEqual(value["allowed_mentions"], {"parse": []})
 
