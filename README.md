@@ -100,6 +100,18 @@ Flavor RAM(MiB)은 1024의 배수여야 합니다. 루트 디스크가 0이면 G
 - 삭제는 DELETING으로 접수하고 Nova 삭제 완료 확인 후 공개 조회에서 제외합니다. 실패는 기록하고 다시 처리합니다. 사용자 삭제는 세션 폐기와 VM 회수 접수를 원자적으로 저장합니다. 역할 변경은 기존 세션을 모두 폐기합니다. 관리자 자기 삭제·마지막 관리자 삭제/강등은 금지됩니다.
 - GET은 DB 읽기와 가용성 조회만 수행하고 VM 생성·삭제·롤백을 수행하지 않습니다. 내부 시스템 사용자는 양의 정수 ID를 가지며 로그인·공개 목록·집계에서 제외됩니다. 삭제 기록과 감사 이벤트는 보존합니다.
 
+## OpenStack 조회 캐시
+
+`GET /api/images`와 `GET /api/images/{osId}/spec`은 이미지별 Glance·Nova 사양 조회의
+성공 결과를 백엔드 메모리에 30초 보관합니다. 동일 이미지의 동시 조회는 하나로 합칩니다.
+캐시는 백엔드 인스턴스별로 독립적이며 최대 128개입니다. 만료 후 조회가 실패하면
+이전 값을 제공하지 않고 오류를 반환하며, 실패 결과는 캐시하지 않습니다.
+이미지·Flavor 변경은 화면에 최대 30초 뒤 반영될 수 있습니다.
+
+인증·권한 검사는 매 요청 수행하며, VM 생성 시 사양 검증과 VM 상태·접속·삭제는 실시간입니다.
+이 캐시는 서버 내부 조회 최적화이며 브라우저·프록시 응답은 계속 `Cache-Control: no-store`입니다.
+Cinder 직접 조회 캐시는 추가하지 않습니다(현재 백엔드는 Nova를 통해 볼륨 생성을 요청).
+
 ## 검증
 
 ```bash
@@ -116,7 +128,7 @@ make test-integration
 TEST_MONGO_URI='mongodb://127.0.0.1:27018/?replicaSet=rs0&directConnection=true' make test-integration
 ```
 
-`TEST_MONGO_URI` 없는 일반 `make test`에서는 DB 통합 테스트를 명시적으로 skip합니다. 완료 검증에는 반드시 `make test-integration`을 사용하세요. 테스트 컨테이너 정리는 `docker compose -f compose.test.yaml down`입니다.
+`TEST_MONGO_URI` 없는 일반 `make test`에서는 DB 통합 테스트를 명시적으로 skip합니다. 완료 검증에는 반드시 `make test-integration`을 사용하세요. 임시 컨테이너는 성공·실패 시 자동 삭제합니다.
 
 ## 배포
 
@@ -131,25 +143,28 @@ staging 확인과 main 승격 절차는
 
 | 백엔드 브랜치 | Jenkins 동작 | 인프라 변경 |
 | --- | --- | --- |
-| `develop` | 테스트·빌드·Trivy·GHCR push → staging 매니페스트 갱신 → 승격용 태그 발행 | `main`의 `k8s/portal/overlays/staging/kustomization.yaml` |
-| `main` | 기존 이미지 조회 → 격리 기동 검사 → prod 매니페스트 갱신 → 운영 HTTP 확인 | `main`의 `k8s/portal/overlays/prod/kustomization.yaml` |
+| `develop` | 테스트·빌드·Trivy·GHCR push → 격리 기동 검사 → staging 매니페스트 갱신 → release.json 보관 | `main`의 `overlays/staging/kustomization.yaml` |
+| `main` | 승인한 digest 직접 조회·소스 확인 → prod 매니페스트 갱신 → 목표 digest 배포 완료 → 운영 HTTP 확인 | `main`의 `overlays/prod/kustomization.yaml` |
 | 그 외 | 중단 | 없음 |
 
-staging 태그 갱신은 자동입니다. staging 동기화·서비스 검증 후 사람이 백엔드 `develop → main` CR을
-승인·머지하면 동일 이미지가 prod로 승격됩니다. 별도의 인프라 prod CR은 생성하지 않습니다.
-백엔드 main 브랜치의 CR 승인·직접 push 차단 규칙은 collabops에서 설정해야 합니다.
+develop은 staging 매니페스트를 자동 갱신하고 빌드 아티팩트로 `release.json`과 `.deploy-digest`를 보관합니다.
+staging에서 해당 digest의 배포·기능을 확인한 뒤 같은 내용의 develop → main CR을 승인·머지합니다.
+main은 **Build with Parameters**에서 승인한 `release.json`의 `digest`를 `PROMOTE_DIGEST`에 넣어 실행합니다.
+빈 값·잘못된 digest는 prod 변경 전에 실패합니다. main 머지 webhook의 기본 실행도 이 값이 없으면 배포하지 않습니다.
 
-배포 참조는 `newTag` 대신 불변 `digest: sha256:...`를 사용합니다. GHCR에는 빌드별 태그와
-내용 해시 기반 `tree-<해시>` 태그를 사용합니다. staging 매니페스트 갱신 후 같은 digest로
-승격용 태그를 발행합니다. 이 태그는 실제 배포·API 검증 통과의 증거가 아닙니다.
-Jenkins는 Argo CD 상태·Pod를 조회하지 않습니다. main에서는 임시 환경의 새 이미지 기동과
-배포 지시 후 운영 HTTP 응답을 검사합니다. 담당자가 Argo CD 배포 결과와 기능을
-확인한 뒤 동일 내용의 develop → main CR을 승인해야 합니다.
-main 내용에 대응하는 태그가 없으면 prod 변경 전에 실패합니다.
-새 Jenkinsfile이 main에 병합되어야 main도 tree 태그 조회·기동·운영 HTTP 검사 방식을 사용합니다.
-운영 HTTP 응답만으로 새 digest의 배포 완료를 증명하지는 않습니다.
+GHCR에는 빌드 이력용 `<빌드번호>-<커밋 앞 12자>` 태그만 발행하며 승격용 `tree-*` 태그는 발행·조회하지 않습니다.
+main은 `이미지@sha256:...`로 정확한 이미지를 가져온 뒤 이미지의 `io.devoops.source-tree` 라벨이
+main의 전체 소스 tree 해시와 같은지 확인합니다. 소스 지문은 메타데이터이며 이미지 태그가 아닙니다.
+다른 소스·라벨 없는 이전 이미지·GHCR에 없는 digest는 prod 매니페스트 갱신 전에 실패합니다.
+기존 staging 이력 방어도 유지합니다. manifests의 `ci/update-image.sh`가 staging 이력에 없는 digest의 prod 반영을 거부합니다.
+현재 staging의 최신 digest를 자동으로 복사하지 않으므로 다음 develop 배포와 운영 승격을 구분할 수 있습니다.
 
-인프라 저장소의 `ci/update-image.sh`를 호출하며 staging·prod 모두 collabops 원본 `main`에
+main에서는 운영 Deployment/Rollout·Pod를 읽기 전용으로 조회해 목표 digest 배포 완료 후 HTTP를 확인합니다.
+실패 시 자동 롤백하지 않습니다. 운영 조회 Credential 설정은 [백엔드 staging 확인](docs/jenkins-staging-verification.md)을 참고하세요.
+새 흐름은 이 변경으로 develop 릴리스를 만든 뒤 Jenkinsfile을 포함해 main에 병합했을 때 적용됩니다.
+백엔드 main의 CR 승인·직접 push 차단 규칙은 CollabOps에서 설정해야 합니다.
+
+devoops-manifests의 `ci/update-image.sh`를 호출하며 staging·prod 모두 collabops 원본 `main`에
 직접 반영합니다. GitHub 미러에는 쓰지 않습니다. Kustomize와 `co` 인증은 필요하지 않습니다.
 클러스터 직접 배포도 하지 않습니다.
 
@@ -185,17 +200,14 @@ Trivy HIGH·CRITICAL 취약점 검사 실패 시 이미지 발행·인프라 변
 검증된 collabops 호스트 키를 Jenkins의 `~/.ssh/known_hosts`에 등록합니다.
 기존 `collabops-infra-write` Credential 및 SSH Agent 플러그인은 최신 인프라 갱신 단계에서 사용하지 않습니다.
 
-Jenkins 통합 테스트는 `scripts/test-k8s-integration.sh`로 K8s `vdi-staging`의
-`svc/mongodb:27017`에 port-forward합니다. `k8s-staging-mongo` Credential을 Secret file 타입으로
-등록하고 staging 전용 kubeconfig를 업로드합니다. 실행 에이전트에서 staging API에 접근할 수 있어야 하며,
-해당 계정에는 `vdi-staging`의 Services get, Pods get/list, Pods/portforward create 권한이 필요합니다.
-운영 admin kubeconfig를 사용하지 않습니다. 기존 문서 #28의 Jenkins 네트워크 분리 구성에서는
-staging API 접속 허용과 제한된 CI 계정 발급이 먼저 필요합니다.
+Jenkins 통합 테스트는 `scripts/test-integration.sh`로 빌드마다 임시 MongoDB 8 replica set을
+생성합니다. primary 준비 후 실제 DB 통합 테스트를 실행하고 성공·실패 시 컨테이너와 볼륨을
+삭제합니다. staging DB, Kubernetes API 및 `k8s-staging-mongo` 자격 증명은 사용하지 않습니다.
+Jenkins 단계에서는 외부 `TEST_MONGO_URI`를 제거하여 항상 임시 DB를 사용합니다.
+Docker 컨테이너 에이전트는 기본적으로 `$HOSTNAME`으로 자신을 찾아 네트워크를 공유합니다.
+컨테이너 이름이 다른 경우 에이전트 환경변수 `MONGO_TEST_AGENT_CONTAINER`로 지정하세요.
+로컬 실행은 자동 할당한 loopback 포트를 사용하며, Docker와 Go, Python 3가 필요합니다.
 
-터널은 `127.0.0.1`의 자동 할당 포트를 사용합니다. replica set primary 준비 확인 후
-`TEST_MONGO_URI`를 주입해 테스트하며, 성공·실패 시 터널을 종료합니다. Jenkins에서는 Docker MongoDB를
-생성하지 않습니다. 테스트는 staging 서버에 고유 임시 DB를 생성하고 삭제하며 기존 앱 DB는 사용하지 않습니다.
-로컬 `make test-integration`의 Docker Compose 방식은 유지됩니다.
 Dockerfile의 기본 Go 버전은 1.26이며 `--build-arg GO_VERSION=...`으로 변경할 수 있습니다.
 
 ```bash

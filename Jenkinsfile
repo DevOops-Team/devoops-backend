@@ -9,12 +9,18 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
+    parameters {
+        string(name: 'PROMOTE_DIGEST', defaultValue: '',
+            description: 'main 전용: staging에서 검증한 release.json의 sha256 digest 전체 값. 빈 값이면 운영 배포 중단')
+        string(name: 'PROD_VERIFY_CREDENTIALS', defaultValue: 'k8s-prod-readonly',
+            description: 'vdi-prod Deployment·Rollout·Pod 조회 전용 kubeconfig Secret file')
+    }
+
     environment {
-        MONGO_KUBECONFIG_CREDENTIALS = 'k8s-staging-mongo'
         IMAGE_NAME = 'ghcr.io/devoops-team/devoops-backend'
         PROD_HEALTHCHECK_URL = 'https://devoops.site'
-        // devoops-infra는 CollabOps 원본에 쓴다 (GitHub 미러에 쓰면 미러가 깨짐) — ci/update-image.sh
-        INFRA_REPO = 'git@collabops.ai:devoops/devoops-infra.git'
+        // devoops-manifests는 CollabOps 원본에 쓴다 (GitHub 미러에 쓰면 미러가 깨짐) — ci/update-image.sh
+        MANIFESTS_REPO = 'git@collabops.ai:devoops/devoops-manifests.git'
         INFRA_SSH_KEY = '/var/jenkins_home/.ssh/id_ed25519_collabops_ci'
         GHCR_CREDENTIALS = 'ghcr-push'
     }
@@ -25,7 +31,7 @@ pipeline {
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
                 script {
-                    sh 'rm -f .deploy-digest .staging-infra-revision .staging-verified'
+                    sh 'rm -f .deploy-digest .staging-infra-revision .staging-verified release.json'
                     def scmVars = checkout scm
                     if (env.CHANGE_ID) {
                         error('PR 빌드는 배포할 수 없습니다. develop 또는 main 브랜치 작업을 실행하세요.')
@@ -44,8 +50,13 @@ pipeline {
                         error("develop → staging, main → prod만 허용합니다 (받은 브랜치: ${branch})")
                     }
                     def commit = sh(script: 'git rev-parse --short=12 HEAD', returnStdout: true).trim()
-                    // 내용(tree) 해시: develop→main 머지 커밋은 SHA가 달라도 내용이 같으면 tree가 같다
-                    env.TREE = sh(script: 'git rev-parse "HEAD^{tree}"', returnStdout: true).trim().substring(0, 12)
+                    env.SOURCE_COMMIT = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                    env.SOURCE_TREE = sh(script: 'git rev-parse "HEAD^{tree}"', returnStdout: true).trim()
+                    env.TREE = env.SOURCE_TREE.substring(0, 12) // 알림용 소스 지문, 이미지 태그가 아님
+                    env.PROMOTE_DIGEST = params.PROMOTE_DIGEST?.trim() ?: ''
+                    if (env.DEPLOY_ENV == 'prod') {
+                        sh 'python3 scripts/image-release.py prepare-prod'
+                    }
                     env.IMAGE_TAG = "${env.BUILD_NUMBER}-${commit}"
                     currentBuild.description = "${branch} → ${env.DEPLOY_ENV} (tree ${env.TREE})"
                 }
@@ -62,6 +73,7 @@ pipeline {
                     done
                     test -r "$INFRA_SSH_KEY"
                     docker version
+                    kubectl version --client
                 '''
                 script {
                     if (env.DEPLOY_ENV == 'staging') {
@@ -69,10 +81,17 @@ pipeline {
                     set -eu
                     go version
                     gcc --version
-                    kubectl version --client
-                    mongosh --version
                     trivy --version
                         '''
+                    } else {
+                        // Check credential/access before changing the production manifest.
+                        withCredentials([file(credentialsId: params.PROD_VERIFY_CREDENTIALS, variable: 'KUBECONFIG')]) {
+                            sh '''
+                                set -eu
+                                kubectl --request-timeout=10s -n vdi-prod get deployment/backend -o name
+                                kubectl --request-timeout=10s -n vdi-prod get pods -l app=backend -o name
+                            '''
+                        }
                     }
                 }
             }
@@ -92,6 +111,8 @@ pipeline {
                 script { env.LAST_STAGE = env.STAGE_NAME }
                 sh 'make test'
                 sh 'python3 scripts/test-main-health.py'
+                sh 'python3 scripts/test-prod-deployment.py'
+                sh 'python3 scripts/test-image-release.py'
             }
         }
 
@@ -99,10 +120,7 @@ pipeline {
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
-                withCredentials([file(credentialsId: env.MONGO_KUBECONFIG_CREDENTIALS,
-                    variable: 'KUBECONFIG')]) {
-                    sh 'bash scripts/test-k8s-integration.sh'
-                }
+                sh 'env -u TEST_MONGO_URI bash scripts/test-integration.sh'
             }
         }
 
@@ -112,7 +130,10 @@ pipeline {
                 script { env.LAST_STAGE = env.STAGE_NAME }
                 sh '''
                     set -eu
-                    docker build --pull -t "$IMAGE_NAME:$IMAGE_TAG" .
+                    docker build --pull \
+                        --label "org.opencontainers.image.revision=$SOURCE_COMMIT" \
+                        --label "io.devoops.source-tree=$SOURCE_TREE" \
+                        -t "$IMAGE_NAME:$IMAGE_TAG" .
                 '''
             }
         }
@@ -141,9 +162,19 @@ pipeline {
                         trap 'rm -rf "$DOCKER_CONFIG"' EXIT
                         printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
                         docker push "$IMAGE_NAME:$IMAGE_TAG"
-                        # tree 태그는 staging 매니페스트 갱신 후 발행한다. 실제 배포 확인은 사람이 한다.
+                        # 업로드한 digest를 staging 배포와 릴리스 기록에 사용한다.
                         docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE_NAME:$IMAGE_TAG" | sed 's/.*@//' > "$WORKSPACE/.deploy-digest"
                     '''
+                }
+            }
+        }
+
+        stage('이미지 기동 검사 [develop]') {
+            when { expression { env.DEPLOY_ENV == 'staging' } }
+            steps {
+                script { env.LAST_STAGE = env.STAGE_NAME }
+                timeout(time: 10, unit: 'MINUTES') {
+                    sh 'python3 scripts/check-image-startup.py'
                 }
             }
         }
@@ -161,29 +192,16 @@ pipeline {
                         export DOCKER_CONFIG="$(mktemp -d)"
                         trap 'rm -rf "$DOCKER_CONFIG"' EXIT
                         printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
-                        if ! docker pull -q "$IMAGE_NAME:tree-$TREE" >/dev/null; then
-                            echo "develop에서 staging 매니페스트 갱신까지 완료한 이미지가 없습니다: $IMAGE_NAME:tree-$TREE"
-                            echo "main 내용이 develop 빌드와 다릅니다. main에는 develop에서만 머지하고, develop 빌드가 성공한 뒤 머지하세요."
-                            exit 1
-                        fi
-                        docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE_NAME:tree-$TREE" | sed 's/.*@//' > "$WORKSPACE/.deploy-digest"
+                        DIGEST="$(cat "$WORKSPACE/.deploy-digest")"
+                        docker pull -q "$IMAGE_NAME@$DIGEST" >/dev/null
+                        python3 scripts/image-release.py verify-prod
                     '''
                 }
             }
         }
 
-        stage('이미지 기동 검사 [main]') {
-            when { expression { env.DEPLOY_ENV == 'prod' } }
-            steps {
-                script { env.LAST_STAGE = env.STAGE_NAME }
-                timeout(time: 10, unit: 'MINUTES') {
-                    sh 'python3 scripts/check-image-startup.py'
-                }
-            }
-        }
-
         stage('매니페스트 갱신 [develop·main]') {
-            // CollabOps devoops-infra overlays/<staging|prod> → GitHub 미러 → Argo CD
+            // CollabOps devoops-manifests overlays/<staging|prod> → GitHub 미러 → Argo CD
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
                 dir('infra-manifests') {
@@ -198,20 +216,27 @@ pipeline {
                         DIGEST="$(cat "$WORKSPACE/.deploy-digest")"
                         case "$DIGEST" in sha256:*) ;; *) echo "digest 없음"; exit 1 ;; esac
                         export GIT_SSH_COMMAND="ssh -i $INFRA_SSH_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
-                        git clone -q --depth 1 -b main "$INFRA_REPO" infra
+                        git clone -q --depth 1 -b main "$MANIFESTS_REPO" manifests
+                        test -f "manifests/overlays/$DEPLOY_ENV/kustomization.yaml"
                         rc=0
-                        bash infra/ci/update-image.sh "$DEPLOY_ENV" "$IMAGE_NAME" "$DIGEST" "jenkins #$BUILD_NUMBER tree-$TREE" || rc=$?
+                        bash manifests/ci/update-image.sh "$DEPLOY_ENV" "$IMAGE_NAME" "$DIGEST" "jenkins #$BUILD_NUMBER source-$SOURCE_COMMIT" || rc=$?
                         # 0 = 반영, 3 = 이미 같은 이미지
                         [ "$rc" = 0 ] || [ "$rc" = 3 ]
                         if [ "$DEPLOY_ENV" = staging ]; then
-                            git -C infra fetch -q origin main
-                            REVISION="$(git -C infra rev-parse FETCH_HEAD)"
-                            ACTUAL="$(git -C infra show "$REVISION:k8s/portal/overlays/staging/kustomization.yaml" |
-                                awk -v mode=get -v img="$IMAGE_NAME" -f infra/ci/images.awk)"
+                            git -C manifests fetch -q origin main
+                            REVISION="$(git -C manifests rev-parse FETCH_HEAD)"
+                            ACTUAL="$(git -C manifests show "$REVISION:overlays/staging/kustomization.yaml" |
+                                awk -v mode=get -v img="$IMAGE_NAME" -f manifests/ci/images.awk)"
                             [ "$ACTUAL" = "$DIGEST" ] || { echo 'staging 이미지가 다른 변경으로 교체되었습니다'; exit 1; }
                             printf '%s' "$REVISION" > "$WORKSPACE/.staging-infra-revision"
                         fi
                     '''
+                }
+                script {
+                    if (env.DEPLOY_ENV == 'staging') {
+                        sh 'python3 scripts/image-release.py record-staging'
+                        archiveArtifacts artifacts: 'release.json,.deploy-digest', fingerprint: true
+                    }
                 }
             }
         }
@@ -220,42 +245,22 @@ pipeline {
             when { expression { env.DEPLOY_ENV == 'prod' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
-                timeout(time: 12, unit: 'MINUTES') {
-                    sh 'python3 scripts/check-prod-health.py'
+                timeout(time: 45, unit: 'MINUTES') {
+                    withCredentials([file(credentialsId: params.PROD_VERIFY_CREDENTIALS, variable: 'KUBECONFIG')]) {
+                        sh 'python3 scripts/check-prod-health.py'
+                    }
                 }
             }
         }
 
-        stage('태그 발행 [develop]') {
-            // staging 매니페스트 갱신 후 같은 digest의 tree 태그를 발행한다. 실제 배포 확인은 사람이 한다.
-            when { expression { env.DEPLOY_ENV == 'staging' } }
-            steps {
-                script { env.LAST_STAGE = env.STAGE_NAME }
-                withCredentials([usernamePassword(credentialsId: env.GHCR_CREDENTIALS,
-                    usernameVariable: 'GHCR_USERNAME', passwordVariable: 'GHCR_TOKEN')]) {
-                    sh '''
-                        set +x
-                        set -eu
-                        export DOCKER_CONFIG="$(mktemp -d)"
-                        trap 'rm -rf "$DOCKER_CONFIG"' EXIT
-                        printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
-                        EXPECTED="$(cat "$WORKSPACE/.deploy-digest")"
-                        # Tag the exact pushed digest, even if a local tag changed meanwhile.
-                        docker pull -q "$IMAGE_NAME@$EXPECTED" >/dev/null
-                        docker tag "$IMAGE_NAME@$EXPECTED" "$IMAGE_NAME:tree-$TREE"
-                        docker push "$IMAGE_NAME:tree-$TREE"
-                    '''
-                }
-            }
-        }
     }
 
     post {
         success {
             script {
                 echo env.DEPLOY_ENV == 'staging' ?
-                    'staging 매니페스트 갱신·승격용 태그 발행 완료. 실제 배포·기능은 사람이 확인한 후 main에 머지하세요.' :
-                    '새 이미지 기동·prod 매니페스트 갱신·운영 HTTP 확인 성공. 새 digest의 배포 완료는 Argo CD에서 별도 확인하세요.'
+                    '이미지 기동 검사·staging 매니페스트 갱신·release.json 기록 완료. staging 검증 후 승인한 digest로 main 배포를 실행하세요.' :
+                    '목표 digest의 prod 배포 완료·전체 Pod Ready·운영 HTTP 확인 성공.'
             }
         }
         always {

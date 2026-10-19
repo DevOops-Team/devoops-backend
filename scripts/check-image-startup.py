@@ -88,8 +88,8 @@ def wait(check, attempts=40, sleep=time.sleep):
 
 
 def check_image(env=os.environ):
-    if env.get('SOURCE_BRANCH', env.get('BRANCH_NAME')) != 'main' or env.get('DEPLOY_ENV') != 'prod':
-        raise StartupError('main → prod 기동 검사만 허용합니다')
+    if env.get('SOURCE_BRANCH', env.get('BRANCH_NAME')) != 'develop' or env.get('DEPLOY_ENV') != 'staging':
+        raise StartupError('develop → staging 기동 검사만 허용합니다')
     image = env.get('IMAGE_NAME')
     digest = (Path(env['WORKSPACE']) / '.deploy-digest').read_text().strip()
     if image != 'ghcr.io/devoops-team/devoops-backend' or not re.fullmatch(r'sha256:[a-f0-9]{64}', digest):

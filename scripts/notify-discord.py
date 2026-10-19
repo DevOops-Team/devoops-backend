@@ -86,7 +86,7 @@ def payload(env, log="", commit="", now=None, digest="미확정"):
     field("브랜치 → 환경", f"{env.get('N_BRANCH', '-')} → {env.get('N_ENV', '-')}", True)
     field("소요 시간", env.get("N_DURATION"), True)
     field("완료 알림 시각 (KST)", kst.strftime("%Y-%m-%d %H:%M:%S KST"))
-    field("이미지 digest / 내용 해시", f"{digest}\ntree-{env.get('N_TREE', '-')}")
+    field("이미지 digest / 내용 해시", f"{digest}\nsource-tree: {env.get('N_TREE', '-')}")
     url = env.get("N_BUILD_URL", "")
     if url:
         field("Jenkins 빌드", url)
