@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Record staging releases and verify an explicitly selected production digest."""
+"""Read the staging manifest digest and verify production promotion."""
 import json
 import os
 from pathlib import Path
@@ -14,7 +14,7 @@ TREE_LABEL = 'io.devoops.source-tree'
 def digest(value):
     value = value.strip()
     if not re.fullmatch(r'sha256:[a-f0-9]{64}', value):
-        raise ValueError('PROMOTE_DIGEST에 승인한 sha256 digest 전체 값을 입력하세요')
+        raise ValueError('staging 매니페스트에 유효한 sha256 digest가 필요합니다')
     return value
 
 
@@ -31,9 +31,17 @@ def context(env, branch, target):
 
 def prepare_prod(env=os.environ):
     root, _ = context(env, 'main', 'prod')
-    selected = digest(env.get('PROMOTE_DIGEST', ''))
+    # Read once from the cloned CollabOps main snapshot. Subsequent staging
+    # updates cannot change this run's selected digest.
+    manifests = root / 'promotion-manifests'
+    result = subprocess.run(
+        ['awk', '-v', 'mode=get', '-v', 'img=' + IMAGE,
+         '-f', str(manifests / 'ci/images.awk'),
+         str(manifests / 'overlays/staging/kustomization.yaml')],
+        check=True, capture_output=True, text=True, timeout=30)
+    selected = digest(result.stdout)
     (root / '.deploy-digest').write_text(selected + '\n')
-    print('운영 승격 대상으로 지정한 digest: ' + selected, flush=True)
+    print('staging 매니페스트에서 자동 조회한 digest: ' + selected, flush=True)
 
 
 def verify_prod(env=os.environ, inspect=None):
@@ -47,8 +55,8 @@ def verify_prod(env=os.environ, inspect=None):
             return json.loads(result.stdout)
     labels = inspect(image)
     if not isinstance(labels, dict) or labels.get(TREE_LABEL) != tree:
-        raise ValueError('승격 이미지의 소스가 main과 다릅니다. 이 파이프라인으로 만든 develop 릴리스를 선택하세요')
-    print('지정 digest 이미지와 main 소스 일치 확인 완료', flush=True)
+        raise ValueError('승격 이미지의 소스가 main과 다릅니다. main과 같은 소스의 develop 빌드가 staging에 반영된 후 다시 실행하세요')
+    print('staging digest 이미지와 main 소스 일치 확인 완료', flush=True)
 
 
 def record_staging(env=os.environ):
@@ -61,7 +69,7 @@ def record_staging(env=os.environ):
     release = dict(image=IMAGE, digest=selected, source_commit=commit, source_tree=tree,
                    staging_manifest_revision=revision, build_number=env.get('BUILD_NUMBER', ''))
     (root / 'release.json').write_text(json.dumps(release, indent=2) + '\n')
-    print('릴리스 기록 생성 완료. staging 검증 후 release.json의 digest를 PROMOTE_DIGEST로 지정하세요.', flush=True)
+    print('릴리스 기록 생성 완료. main은 staging 매니페스트의 digest를 자동 조회합니다.', flush=True)
 
 
 if __name__ == '__main__':

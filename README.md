@@ -144,20 +144,21 @@ staging 확인과 main 승격 절차는
 | 백엔드 브랜치 | Jenkins 동작 | 인프라 변경 |
 | --- | --- | --- |
 | `develop` | 테스트·빌드·Trivy·GHCR push → 격리 기동 검사 → staging 매니페스트 갱신 → release.json 보관 | `main`의 `overlays/staging/kustomization.yaml` |
-| `main` | 승인한 digest 직접 조회·소스 확인 → prod 매니페스트 갱신 → 목표 digest 배포 완료 → 운영 HTTP 확인 | `main`의 `overlays/prod/kustomization.yaml` |
+| `main` | staging digest 자동 조회·소스 확인 → prod 매니페스트 갱신 → 목표 digest 배포 완료 → 운영 HTTP 확인 | `main`의 `overlays/prod/kustomization.yaml` |
 | 그 외 | 중단 | 없음 |
 
 develop은 staging 매니페스트를 자동 갱신하고 빌드 아티팩트로 `release.json`과 `.deploy-digest`를 보관합니다.
 staging에서 해당 digest의 배포·기능을 확인한 뒤 같은 내용의 develop → main CR을 승인·머지합니다.
-main은 **Build with Parameters**에서 승인한 `release.json`의 `digest`를 `PROMOTE_DIGEST`에 넣어 실행합니다.
-빈 값·잘못된 digest는 prod 변경 전에 실패합니다. main 머지 webhook의 기본 실행도 이 값이 없으면 배포하지 않습니다.
+main은 웹훅으로 실행되면 CollabOps `devoops-manifests` main의
+`overlays/staging/kustomization.yaml`에서 백엔드 digest를 자동으로 읽습니다. 수동 입력은 필요 없습니다.
+읽은 digest는 해당 빌드 동안 고정하며, 이미지의 소스가 main과 일치할 때만 prod를 갱신합니다.
 
 GHCR에는 빌드 이력용 `<빌드번호>-<커밋 앞 12자>` 태그만 발행하며 승격용 `tree-*` 태그는 발행·조회하지 않습니다.
 main은 `이미지@sha256:...`로 정확한 이미지를 가져온 뒤 이미지의 `io.devoops.source-tree` 라벨이
 main의 전체 소스 tree 해시와 같은지 확인합니다. 소스 지문은 메타데이터이며 이미지 태그가 아닙니다.
 다른 소스·라벨 없는 이전 이미지·GHCR에 없는 digest는 prod 매니페스트 갱신 전에 실패합니다.
 기존 staging 이력 방어도 유지합니다. manifests의 `ci/update-image.sh`가 staging 이력에 없는 digest의 prod 반영을 거부합니다.
-현재 staging의 최신 digest를 자동으로 복사하지 않으므로 다음 develop 배포와 운영 승격을 구분할 수 있습니다.
+다음 develop 배포로 staging 이미지가 main과 달라졌다면 소스 검증에서 중단하며, 다른 소스의 이미지를 운영에 반영하지 않습니다.
 
 main에서는 운영 Deployment/Rollout·Pod를 읽기 전용으로 조회해 목표 digest 배포 완료 후 HTTP를 확인합니다.
 실패 시 자동 롤백하지 않습니다. 운영 조회 Credential 설정은 [백엔드 staging 확인](docs/jenkins-staging-verification.md)을 참고하세요.

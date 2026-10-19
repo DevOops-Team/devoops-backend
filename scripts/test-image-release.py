@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+import subprocess
 
 spec = importlib.util.spec_from_file_location('release', Path(__file__).with_name('image-release.py'))
 release = importlib.util.module_from_spec(spec)
@@ -15,13 +18,20 @@ TREE = 'b' * 40
 class ReleaseTests(unittest.TestCase):
     def env(self, root, branch='main', target='prod'):
         return dict(WORKSPACE=root, SOURCE_BRANCH=branch, DEPLOY_ENV=target, IMAGE_NAME=release.IMAGE,
-                    SOURCE_TREE=TREE, SOURCE_COMMIT='c'*40, PROMOTE_DIGEST=DIGEST, BUILD_NUMBER='42')
+                    SOURCE_TREE=TREE, SOURCE_COMMIT='c'*40, BUILD_NUMBER='42')
 
-    def test_explicit_digest_is_pinned_without_any_staging_latest_lookup(self):
+    def select(self, env, value=DIGEST):
+        with patch.object(release.subprocess, 'run', return_value=SimpleNamespace(stdout=value)) as run:
+            release.prepare_prod(env)
+            return run.call_args.args[0]
+
+    def test_digest_is_automatically_read_from_staging_manifest_and_pinned(self):
         with tempfile.TemporaryDirectory() as root:
             env = self.env(root)
-            env['PROMOTE_DIGEST'] = '  '+DIGEST+'\n'
-            release.prepare_prod(env)
+            command = self.select(env, '  '+DIGEST+'\n')
+            self.assertIn(str(Path(root, 'promotion-manifests/overlays/staging/kustomization.yaml')), command)
+            self.assertIn(str(Path(root, 'promotion-manifests/ci/images.awk')), command)
+            self.assertIn('img='+release.IMAGE, command)
             self.assertEqual(Path(root, '.deploy-digest').read_text().strip(), DIGEST)
             seen = []
             def inspect(image):
@@ -32,16 +42,21 @@ class ReleaseTests(unittest.TestCase):
 
     def test_missing_malformed_tag_or_foreign_image_digest_is_rejected(self):
         for value in ('', 'latest', 'tree-'+TREE[:12], 'sha256:bad', 'sha256:'+'A'*64,
-                      'other/image@'+DIGEST, DIGEST+';echo bad'):
+                      'other/image@'+DIGEST, DIGEST+';echo bad', DIGEST+'\n'+DIGEST):
             with self.subTest(value=value), tempfile.TemporaryDirectory() as root:
-                env=self.env(root); env['PROMOTE_DIGEST']=value
-                with self.assertRaises(ValueError): release.prepare_prod(env)
+                with self.assertRaises(ValueError): self.select(self.env(root), value)
                 self.assertFalse(Path(root, '.deploy-digest').exists())
+
+    def test_manifest_read_failure_stops_before_selection(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch.object(release.subprocess, 'run', side_effect=subprocess.CalledProcessError(2, 'awk')):
+                with self.assertRaises(subprocess.CalledProcessError): release.prepare_prod(self.env(root))
+            self.assertFalse(Path(root, '.deploy-digest').exists())
 
     def test_source_mismatch_or_missing_image_labels_blocks_promotion(self):
         for labels in (None, {}, {release.TREE_LABEL:'d'*40}, {release.TREE_LABEL:TREE[:12]}):
             with self.subTest(labels=labels), tempfile.TemporaryDirectory() as root:
-                env=self.env(root); release.prepare_prod(env)
+                env=self.env(root); self.select(env)
                 with self.assertRaises(ValueError): release.verify_prod(env, lambda _:labels)
 
     def test_branch_environment_repository_and_tree_guards(self):
@@ -49,7 +64,7 @@ class ReleaseTests(unittest.TestCase):
                           ('SOURCE_TREE',''), ('SOURCE_TREE',TREE[:12])]:
             with self.subTest(key=key), tempfile.TemporaryDirectory() as root:
                 env=self.env(root);env[key]=value
-                with self.assertRaises(ValueError): release.prepare_prod(env)
+                with self.assertRaises(ValueError): self.select(env)
                 self.assertFalse(Path(root, '.deploy-digest').exists())
 
     def test_staging_release_records_the_exact_pushed_digest_and_source(self):
@@ -61,11 +76,11 @@ class ReleaseTests(unittest.TestCase):
             data=json.loads(Path(root,'release.json').read_text())
             self.assertEqual(data, dict(image=release.IMAGE, digest=DIGEST, source_commit='c'*40,
                                        source_tree=TREE, staging_manifest_revision='d'*40, build_number='42'))
-            # A later staging release cannot change the digest selected for a main run.
-            selected=data['digest']
-            Path(root,'.deploy-digest').write_text('sha256:'+'e'*64)
-            env=self.env(root);env['PROMOTE_DIGEST']=selected
-            release.prepare_prod(env)
+            # Once selected, a later staging change cannot replace this run's digest.
+            main=self.env(root)
+            self.select(main, data['digest'])
+            with patch.object(release.subprocess, 'run', side_effect=AssertionError('must not re-read staging')):
+                release.verify_prod(main, lambda _: {release.TREE_LABEL:TREE})
             self.assertEqual(Path(root,'.deploy-digest').read_text().strip(), DIGEST)
 
     def test_release_record_requires_successful_manifest_revision(self):
@@ -93,7 +108,10 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('--label "io.devoops.source-tree=$SOURCE_TREE"',text)
         main=text.split("stage('이미지 조회 [main]')",1)[1].split("stage('",1)[0]
         self.assertLess(main.index('docker pull'),main.index('verify-prod'))
-        self.assertIn('prepare-prod',text.split("stage('도구 확인",1)[0])
+        self.assertNotIn('PROMOTE_DIGEST',text)
+        self.assertLess(main.index('git clone'),main.index('prepare-prod'))
+        self.assertLess(main.index('prepare-prod'),main.index('docker pull'))
+        self.assertLess(main.index('verify-prod'),text.split("stage('이미지 조회 [main]')",1)[1].index("stage('매니페스트 갱신"))
         manifest=text.split("stage('매니페스트 갱신 [develop·main]')",1)[1].split("stage('",1)[0]
         self.assertLess(manifest.index('update-image.sh'),manifest.index('record-staging'))
         self.assertLess(manifest.index('ACTUAL'),manifest.index('archiveArtifacts'))
