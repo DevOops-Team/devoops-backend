@@ -128,7 +128,7 @@ make test-integration
 TEST_MONGO_URI='mongodb://127.0.0.1:27018/?replicaSet=rs0&directConnection=true' make test-integration
 ```
 
-`TEST_MONGO_URI` 없는 일반 `make test`에서는 DB 통합 테스트를 명시적으로 skip합니다. 완료 검증에는 반드시 `make test-integration`을 사용하세요. 임시 컨테이너는 성공·실패 시 자동 삭제합니다.
+`make test`는 단위 테스트를 실행하고, `make test-integration`은 `integration` 빌드 태그와 테스트 이름으로 DB 통합 테스트만 선택합니다. 통합 테스트는 최대 2개를 병렬 실행하며 `-race`·`-count=1`을 유지합니다. 전역 메트릭 증가량 검사와 선택적 프론트 연동 검사는 순차 실행합니다. 전체 검증에는 두 명령을 모두 사용하세요. 임시 컨테이너는 성공·실패 시 자동 삭제합니다.
 
 ## 배포
 

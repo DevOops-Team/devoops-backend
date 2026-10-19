@@ -49,4 +49,6 @@ if [[ -z "${TEST_MONGO_URI:-}" ]]; then
   fi
   export TEST_MONGO_URI="mongodb://127.0.0.1:$port/?replicaSet=rs0&directConnection=true&serverSelectionTimeoutMS=5000"
 fi
-go test -race -count=1 ./...
+# Unit tests run in the preceding CI stage. Keep integration cases fresh and
+# bound DB load to two parallel fixtures; retain the race detector.
+go test -race -count=1 -tags integration -run '^TestIntegration' -parallel=2 ./internal/vdi

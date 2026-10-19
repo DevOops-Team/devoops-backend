@@ -1,3 +1,5 @@
+//go:build integration
+
 package vdi_test
 
 import (
@@ -176,7 +178,8 @@ func keys(t *testing.T, v map[string]any, want ...string) {
 		t.Fatalf("keys got %v want %v", got, want)
 	}
 }
-func TestAuthenticationAndLogout(t *testing.T) {
+func TestIntegrationAuthenticationAndLogout(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	keys(t, f.request("GET", "/api/me", f.admin, nil, "", 200), "id", "name", "email", "role", "createdAt", "updatedAt")
 	a := f.request("POST", "/api/auth/login", "", map[string]any{"email": "missing@example.com", "password": "wrong"}, "", 401)
@@ -208,7 +211,8 @@ func TestAuthenticationAndLogout(t *testing.T) {
 	f.request("GET", "/api/me", second, nil, "", 401)
 	f.request("POST", "/api/auth/logout", second, nil, "", 401)
 }
-func TestBootstrapAndLogoutAtomicity(t *testing.T) {
+func TestIntegrationBootstrapAndLogoutAtomicity(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	var admin vdi.User
 	_ = f.store.C("users").FindOne(context.Background(), bson.M{"id": f.adminID}).Decode(&admin)
@@ -235,7 +239,8 @@ func TestBootstrapAndLogoutAtomicity(t *testing.T) {
 		t.Fatal("raw session token")
 	}
 }
-func TestDesktopLifecycleAndGuacamole(t *testing.T) {
+func TestIntegrationDesktopLifecycleAndGuacamole(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	_, user := f.user("user@example.com", "USER")
 	_, other := f.user("other@example.com", "USER")
@@ -332,7 +337,8 @@ func TestDesktopLifecycleAndGuacamole(t *testing.T) {
 		t.Fatal(last)
 	}
 }
-func TestConcurrentQuotaAndIdempotency(t *testing.T) {
+func TestIntegrationConcurrentQuotaAndIdempotency(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	_, user := f.user("user@example.com", "USER")
 	body := f.body()
@@ -393,7 +399,8 @@ func TestConcurrentQuotaAndIdempotency(t *testing.T) {
 		f.request("POST", "/api/desktops", f.admin, f.body(), uuid.NewString(), 202) // ADMIN has no quota
 	}
 }
-func TestAvailabilityValidation(t *testing.T) {
+func TestIntegrationAvailabilityValidation(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	for _, body := range []map[string]any{{"name": "x"}, {"name": "x", "osId": f.osID, "cpuCores": 1, "memoryGb": 1, "storageGb": 10, "userId": 4}} {
 		f.request("POST", "/api/desktops", f.admin, body, uuid.NewString(), 400)
@@ -422,7 +429,8 @@ func TestAvailabilityValidation(t *testing.T) {
 		t.Fatal("reauth")
 	}
 }
-func TestWindowsImageUsesWindowsFlavor(t *testing.T) {
+func TestIntegrationWindowsImageUsesWindowsFlavor(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	var win vdi.OS
 	if e := f.store.C("os").FindOne(context.Background(), bson.M{"type": "WINDOWS"}).Decode(&win); e != nil {
@@ -450,7 +458,8 @@ func TestWindowsImageUsesWindowsFlavor(t *testing.T) {
 		}
 	}
 }
-func TestResponseLossRecoveryAndWorkerClaims(t *testing.T) {
+func TestIntegrationResponseLossRecoveryAndWorkerClaims(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.cloud.Set(func(s *testinfra.OpenStack) { s.LoseCreate = true })
 	n := f.create(f.admin)
@@ -495,7 +504,8 @@ func TestResponseLossRecoveryAndWorkerClaims(t *testing.T) {
 		t.Fatal(v)
 	}
 }
-func TestTimeoutCleanupAndDeletionRetries(t *testing.T) {
+func TestIntegrationTimeoutCleanupAndDeletionRetries(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	n := f.create(f.admin)
 	f.tick(1)
@@ -540,7 +550,8 @@ func TestTimeoutCleanupAndDeletionRetries(t *testing.T) {
 	f.tick(6)
 	f.request("GET", path(active), f.admin, nil, "", 404)
 }
-func TestAdminMutationsAndEventFilters(t *testing.T) {
+func TestIntegrationAdminMutationsAndEventFilters(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	uid, token := f.user("user@example.com", "USER")
 	n := f.create(token)
@@ -579,7 +590,8 @@ func TestAdminMutationsAndEventFilters(t *testing.T) {
 	}
 	keys(t, events[0], "id", "actorId", "desktopId", "action", "targetType", "detail", "createdAt")
 }
-func TestConcurrentLastAdminProtection(t *testing.T) {
+func TestIntegrationConcurrentLastAdminProtection(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	id2, token2 := f.user("admin2@example.com", "ADMIN")
 	var wg sync.WaitGroup
@@ -616,7 +628,8 @@ func TestConcurrentLastAdminProtection(t *testing.T) {
 		t.Fatal(count, e)
 	}
 }
-func TestExpiredIdempotencyAndCommonErrors(t *testing.T) {
+func TestIntegrationExpiredIdempotencyAndCommonErrors(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	key := uuid.NewString()
 	v := f.request("POST", "/api/desktops", f.admin, f.body(), key, 202)
@@ -669,7 +682,9 @@ func createFailures(t *testing.T, code string) float64 {
 	t.Fatalf("vdi_desktop_create_failures_total{code=%q} not exported", code)
 	return 0
 }
-func TestKnownCreateRejectionAndDuplicateCleanup(t *testing.T) {
+
+// Keep serial: the assertion observes a process-wide Prometheus counter delta.
+func TestIntegrationKnownCreateRejectionAndDuplicateCleanup(t *testing.T) {
 	t.Run("definitive rejection releases quota", func(t *testing.T) {
 		f := setup(t)
 		_, user := f.user("user@example.com", "USER")
@@ -719,7 +734,8 @@ func TestKnownCreateRejectionAndDuplicateCleanup(t *testing.T) {
 		}
 	})
 }
-func TestReservationReleaseUnderConcurrentCompletion(t *testing.T) {
+func TestIntegrationReservationReleaseUnderConcurrentCompletion(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	n1 := f.create(f.admin)
 	n2 := f.create(f.admin)
@@ -747,7 +763,8 @@ func TestReservationReleaseUnderConcurrentCompletion(t *testing.T) {
 	f.create(f.admin)
 	f.create(f.admin)
 }
-func TestReadinessTimeoutCauseAndPendingDeleteRecovery(t *testing.T) {
+func TestIntegrationReadinessTimeoutCauseAndPendingDeleteRecovery(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	n := f.create(f.admin)
 	f.tick(1)
@@ -768,7 +785,8 @@ func TestReadinessTimeoutCauseAndPendingDeleteRecovery(t *testing.T) {
 		t.Fatal("deleted queue created VM", creates)
 	}
 }
-func TestMeErrorsAndNoBodyContracts(t *testing.T) {
+func TestIntegrationMeErrorsAndNoBodyContracts(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	v := f.request("GET", "/api/me", "", nil, "", 401)
 	if v["code"] != "UNAUTHENTICATED" {
@@ -788,7 +806,8 @@ func TestMeErrorsAndNoBodyContracts(t *testing.T) {
 		t.Fatal(v)
 	}
 }
-func TestCreateTransactionRollbackAndUserDeleteSession(t *testing.T) {
+func TestIntegrationCreateTransactionRollbackAndUserDeleteSession(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	uid, user := f.user("user@example.com", "USER")
 	_, e := f.store.DB.RunCommand(context.Background(), bson.D{{Key: "collMod", Value: "events"}, {Key: "validator", Value: bson.M{"action": bson.M{"$ne": "DESKTOP_CREATE"}}}}).Raw()
@@ -812,7 +831,8 @@ func TestCreateTransactionRollbackAndUserDeleteSession(t *testing.T) {
 	f.request("GET", path(n), user, nil, "", 401)
 	f.request("GET", "/api/me", user, nil, "", 401)
 }
-func TestCreateResultSurvivesConcurrentDeletion(t *testing.T) {
+func TestIntegrationCreateResultSurvivesConcurrentDeletion(t *testing.T) {
+	t.Parallel()
 	for _, rejected := range []bool{false, true} {
 		t.Run(fmt.Sprintf("rejected=%v", rejected), func(t *testing.T) {
 			f := setup(t)
@@ -845,7 +865,8 @@ func TestCreateResultSurvivesConcurrentDeletion(t *testing.T) {
 		})
 	}
 }
-func TestNovaGetOutageDoesNotExtendReadinessDeadline(t *testing.T) {
+func TestIntegrationNovaGetOutageDoesNotExtendReadinessDeadline(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	n := f.create(f.admin)
 	f.tick(1)
@@ -862,7 +883,8 @@ func TestNovaGetOutageDoesNotExtendReadinessDeadline(t *testing.T) {
 	f.create(f.admin)
 }
 
-func TestIdempotencyPreservesExactTimestamp(t *testing.T) {
+func TestIntegrationIdempotencyPreservesExactTimestamp(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.now = f.now.Add(123456 * time.Nanosecond)
 	key := uuid.NewString()

@@ -1,3 +1,5 @@
+//go:build integration
+
 package vdi_test
 
 import (
@@ -15,7 +17,8 @@ import (
 )
 
 // Catalog reads may be briefly stale, but create must always validate live.
-func TestCatalogCacheDoesNotBypassCreateValidation(t *testing.T) {
+func TestIntegrationCatalogCacheDoesNotBypassCreateValidation(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	path := fmt.Sprintf("/api/images/%d/spec", f.osID)
 	first := f.request("GET", path, f.admin, nil, "", 200)
@@ -35,7 +38,8 @@ func TestCatalogCacheDoesNotBypassCreateValidation(t *testing.T) {
 	f.request("POST", "/api/desktops", f.admin, body, "04359ceb-c811-4c94-8225-1cb235b4be00", 202)
 }
 
-func TestImageSpecForCreateForm(t *testing.T) {
+func TestIntegrationImageSpecForCreateForm(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	path := fmt.Sprintf("/api/images/%d/spec", f.osID)
 	v := f.request("GET", path, f.admin, nil, "", 200)
@@ -59,7 +63,7 @@ func TestImageSpecForCreateForm(t *testing.T) {
 
 // Opt-in because this test starts the sibling Next.js production server.
 // Build frontend first with VDI_BACKEND_URL=http://127.0.0.1:8080.
-func TestFrontendIntegration(t *testing.T) {
+func TestIntegrationFrontendIntegration(t *testing.T) {
 	dir := os.Getenv("FRONTEND_INTEGRATION_DIR")
 	if dir == "" {
 		t.Skip("FRONTEND_INTEGRATION_DIR required for the Next.js integration test")
