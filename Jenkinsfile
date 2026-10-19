@@ -17,7 +17,6 @@ pipeline {
     }
 
     environment {
-        MONGO_KUBECONFIG_CREDENTIALS = 'k8s-staging-mongo'
         IMAGE_NAME = 'ghcr.io/devoops-team/devoops-backend'
         PROD_HEALTHCHECK_URL = 'https://devoops.site'
         // devoops-manifests는 CollabOps 원본에 쓴다 (GitHub 미러에 쓰면 미러가 깨짐) — ci/update-image.sh
@@ -82,8 +81,6 @@ pipeline {
                     set -eu
                     go version
                     gcc --version
-                    kubectl version --client
-                    mongosh --version
                     trivy --version
                         '''
                     } else {
@@ -123,10 +120,7 @@ pipeline {
             when { expression { env.DEPLOY_ENV == 'staging' } }
             steps {
                 script { env.LAST_STAGE = env.STAGE_NAME }
-                withCredentials([file(credentialsId: env.MONGO_KUBECONFIG_CREDENTIALS,
-                    variable: 'KUBECONFIG')]) {
-                    sh 'bash scripts/test-k8s-integration.sh'
-                }
+                sh 'env -u TEST_MONGO_URI bash scripts/test-integration.sh'
             }
         }
 

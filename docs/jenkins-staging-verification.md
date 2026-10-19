@@ -36,7 +36,7 @@ main에서는 source-tree 라벨이 현재 main의 전체 tree 해시와 같아�
 ## 검사 범위
 
 Jenkins develop은 staging Application·Deployment·Pod 상태나 staging API를 검사하지 않는다.
-`k8s-staging-mongo` Credential은 Mongo 통합 테스트에서 계속 필요하다.
+Mongo 통합 테스트는 빌드별 임시 MongoDB 8 replica set을 사용하고 종료 시 컨테이너·볼륨을 삭제한다. `k8s-staging-mongo` Credential과 staging DB 접근 권한은 더 이상 필요하지 않다. 실행 방법은 README의 Jenkins 통합 테스트 설명을 따른다.
 main은 운영 Deployment/Rollout·Pod를 읽기 전용으로 조회한다. Argo CD 설정·동기화 정책은 변경하지 않는다.
 실제 배포 참조는 staging·prod 모두 불변 digest다.
 

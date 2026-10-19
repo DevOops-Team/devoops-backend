@@ -116,7 +116,7 @@ make test-integration
 TEST_MONGO_URI='mongodb://127.0.0.1:27018/?replicaSet=rs0&directConnection=true' make test-integration
 ```
 
-`TEST_MONGO_URI` 없는 일반 `make test`에서는 DB 통합 테스트를 명시적으로 skip합니다. 완료 검증에는 반드시 `make test-integration`을 사용하세요. 테스트 컨테이너 정리는 `docker compose -f compose.test.yaml down`입니다.
+`TEST_MONGO_URI` 없는 일반 `make test`에서는 DB 통합 테스트를 명시적으로 skip합니다. 완료 검증에는 반드시 `make test-integration`을 사용하세요. 임시 컨테이너는 성공·실패 시 자동 삭제합니다.
 
 ## 배포
 
@@ -188,17 +188,14 @@ Trivy HIGH·CRITICAL 취약점 검사 실패 시 이미지 발행·인프라 변
 검증된 collabops 호스트 키를 Jenkins의 `~/.ssh/known_hosts`에 등록합니다.
 기존 `collabops-infra-write` Credential 및 SSH Agent 플러그인은 최신 인프라 갱신 단계에서 사용하지 않습니다.
 
-Jenkins 통합 테스트는 `scripts/test-k8s-integration.sh`로 K8s `vdi-staging`의
-`svc/mongodb:27017`에 port-forward합니다. `k8s-staging-mongo` Credential을 Secret file 타입으로
-등록하고 staging 전용 kubeconfig를 업로드합니다. 실행 에이전트에서 staging API에 접근할 수 있어야 하며,
-해당 계정에는 `vdi-staging`의 Services get, Pods get/list, Pods/portforward create 권한이 필요합니다.
-운영 admin kubeconfig를 사용하지 않습니다. 기존 문서 #28의 Jenkins 네트워크 분리 구성에서는
-staging API 접속 허용과 제한된 CI 계정 발급이 먼저 필요합니다.
+Jenkins 통합 테스트는 `scripts/test-integration.sh`로 빌드마다 임시 MongoDB 8 replica set을
+생성합니다. primary 준비 후 실제 DB 통합 테스트를 실행하고 성공·실패 시 컨테이너와 볼륨을
+삭제합니다. staging DB, Kubernetes API 및 `k8s-staging-mongo` 자격 증명은 사용하지 않습니다.
+Jenkins 단계에서는 외부 `TEST_MONGO_URI`를 제거하여 항상 임시 DB를 사용합니다.
+Docker 컨테이너 에이전트는 기본적으로 `$HOSTNAME`으로 자신을 찾아 네트워크를 공유합니다.
+컨테이너 이름이 다른 경우 에이전트 환경변수 `MONGO_TEST_AGENT_CONTAINER`로 지정하세요.
+로컬 실행은 자동 할당한 loopback 포트를 사용하며, Docker와 Go, Python 3가 필요합니다.
 
-터널은 `127.0.0.1`의 자동 할당 포트를 사용합니다. replica set primary 준비 확인 후
-`TEST_MONGO_URI`를 주입해 테스트하며, 성공·실패 시 터널을 종료합니다. Jenkins에서는 Docker MongoDB를
-생성하지 않습니다. 테스트는 staging 서버에 고유 임시 DB를 생성하고 삭제하며 기존 앱 DB는 사용하지 않습니다.
-로컬 `make test-integration`의 Docker Compose 방식은 유지됩니다.
 Dockerfile의 기본 Go 버전은 1.26이며 `--build-arg GO_VERSION=...`으로 변경할 수 있습니다.
 
 ```bash
